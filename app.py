@@ -159,24 +159,65 @@ def run_backtest(ticker, start, end, capital, rsi_buy, rsi_sell_enabled, rsi_sel
     else:
         twa = 0.0
 
-    # Money-Weighted Return (MWA / IRR approximation)
-    # Cash flows: -capital at start, +final value at end, +PnL at each trade exit
+    # IRR-based Money-Weighted Return using daily cash flows
+    # Build a daily cash flow array over the full period
+    mwa = None
+    irr_annual = None
+    hypo_final = None
     try:
-        from numpy_financial import irr as np_irr
-        cf = [-capital]
+        all_dates = [str(df.index[i])[:10] for i in range(len(df))]
+        date_idx  = {d:i for i,d in enumerate(all_dates)}
+        n_days    = len(all_dates)
+        cf_arr    = np.zeros(n_days)
+        cf_arr[0] = -capital  # initial outlay
+
         for t in trades:
-            cf.append(t["pnl"])
-        cf[-1] += ev[-1]  # add final portfolio value to last cash flow
-        mwa_daily = np_irr(cf)
-        mwa = round((((1 + mwa_daily) ** 252) - 1) * 100, 2) if mwa_daily is not None and not np.isnan(mwa_daily) else None
-    except Exception:
-        # Fallback: simple approximation
-        invested_days = sum((pd.Timestamp(t["exitDate"]) - pd.Timestamp(t["entryDate"])).days for t in trades)
-        if invested_days > 0 and trades:
-            total_pnl = sum(t["pnl"] for t in trades)
-            mwa = round((total_pnl / capital) / (invested_days / 365.25) * 100, 2)
+            # Cash in (buy) at entry
+            entry_i = date_idx.get(t["entryDate"])
+            exit_i  = date_idx.get(t["exitDate"])
+            if entry_i is not None:
+                shares_bought = capital / t["entryPrice"] if t["entryPrice"] > 0 else 0
+                cf_arr[entry_i] -= 0  # already accounted in initial capital
+            if exit_i is not None:
+                cf_arr[exit_i] += t["pnl"]  # realised profit/loss at exit
+
+        # Final portfolio value returned at end
+        cf_arr[-1] += ev[-1]
+
+        # Solve for daily IRR using Newton's method
+        def npv(r, cfs):
+            return sum(cf / (1+r)**i for i, cf in enumerate(cfs))
+        def dnpv(r, cfs):
+            return sum(-i*cf / (1+r)**(i+1) for i, cf in enumerate(cfs))
+
+        # Bisection fallback for robustness
+        r = 0.001  # initial guess: 0.1% daily
+        for _ in range(200):
+            n = npv(r, cf_arr)
+            dn = dnpv(r, cf_arr)
+            if abs(dn) < 1e-12: break
+            r_new = r - n/dn
+            if r_new < -0.999: r_new = -0.5
+            if abs(r_new - r) < 1e-10: break
+            r = r_new
+
+        if not np.isnan(r) and r > -0.999:
+            irr_daily  = r
+            irr_annual = round(((1 + irr_daily) ** 252 - 1) * 100, 2)
+            mwa = irr_annual
+
+            # Hypothetical: if all cash-ready days were also invested at same IRR
+            # i.e. capital * (1 + irr_daily)^total_trading_days
+            trading_days = n_days
+            hypo_final   = round(capital * (1 + irr_daily) ** trading_days, 2)
+            hypo_return  = round((hypo_final / capital - 1) * 100, 2)
         else:
-            mwa = None
+            hypo_final  = None
+            hypo_return = None
+    except Exception:
+        hypo_final  = None
+        hypo_return = None
+        irr_annual  = None
 
     # Label each equity point as 'holding' or 'cash'
     holding_dates = set()
@@ -203,7 +244,8 @@ def run_backtest(ticker, start, end, capital, rsi_buy, rsi_sell_enabled, rsi_sel
              "avgWin":round(np.mean(wins),2) if wins else 0,"avgLoss":round(np.mean(losses),2) if losses else 0,
              "sharpe":sharpe,"maxDrawdown":maxdd,"bmReturn":bm_ret,
              "daysSpanned":days_spanned,"annualisedReturn":annualised_ret,
-             "twa":twa,"mwa":mwa,
+             "twa":twa,"mwa":mwa,"irr":irr_annual,
+             "hypoFinal":hypo_final,"hypoReturn":hypo_return,
              "holdingDays":holding_days,"cashDays":cash_days,"deployedPct":deployed_pct}
 
     # Risk metrics
@@ -470,6 +512,11 @@ tr:hover td{background:var(--sur2)}
         <div class="ch">Risk vs Benchmark</div>
         <div class="cb"><div class="sg" id="bt-risk" style="grid-template-columns:repeat(4,1fr);margin-bottom:0"></div></div>
       </div>
+      <div class="card" style="margin-bottom:1rem" id="hypo-card">
+        <div class="ch">Hypothetical Return <span style="font-size:.65rem;font-weight:400;text-transform:none;letter-spacing:0;color:var(--mut)">— IRR applied to full period including cash days</span></div>
+        <div class="cb" id="hypo-body"></div>
+      </div>
+
       <div class="card" style="margin-bottom:1rem">
         <div class="ch">Notes &amp; Thoughts</div>
         <div class="cb">
@@ -712,7 +759,7 @@ function renderBt(data,params){
     {l:'Days Spanned',v:s.daysSpanned,s:`${s.holdingDays}d holding · ${s.cashDays}d cash`,c:'neu'},
     {l:'Annualised Return',v:fmt(s.annualisedReturn,'%'),s:'CAGR over period',c:s.annualisedReturn>=0?'pos':'neg'},
     {l:'TWA Return',v:fmt(s.twa,'%'),s:'time-weighted',c:s.twa>=0?'pos':'neg'},
-    {l:'MWA Return',v:s.mwa!=null?fmt(s.mwa,'%'):'—',s:'money-weighted',c:s.mwa!=null&&s.mwa>=0?'pos':'neg'},
+    {l:'MWA / IRR',v:s.irr!=null?fmt(s.irr,'%'):'—',s:'money-weighted (IRR)',c:s.irr!=null&&s.irr>=0?'pos':'neg'},
     {l:'Capital Deployed',v:s.deployedPct+'%',s:`${s.holdingDays} of ${s.daysSpanned} days`,c:'neu'},
   ].map(c=>`<div class="sc"><div class="sl2">${c.l}</div><div class="sv ${c.c}">${c.v}</div><div class="ss">${c.s}</div></div>`).join('');
   const rm=data.riskMetrics||{};
@@ -730,6 +777,8 @@ function renderBt(data,params){
     {m:'Time-Weighted (TWA)',st:fmt(s.twa,'%'),bm:'—',edge:null},
     {m:'Money-Weighted (MWA)',st:s.mwa!=null?fmt(s.mwa,'%'):'—',bm:'—',edge:null},
     {m:'Capital Deployed',st:s.deployedPct+'%',bm:'100%',edge:null},
+    {m:'IRR (annualised)',st:s.irr!=null?fmt(s.irr,'%'):'—',bm:'—',edge:null},
+    {m:'Hypothetical Return',st:s.hypoReturn!=null?fmt(s.hypoReturn,'%'):'—',bm:'—',edge:null},
   ].map(r=>{const ec=r.edge!==null?(r.edge>=0?'pos':'neg'):'';const ed=r.edge!==null?fmt(r.edge,r.es||''):'—';
     return`<tr><td style="color:var(--mut);font-size:.76rem">${r.m}</td><td style="text-align:right;font-weight:600">${r.st}</td><td style="text-align:right;color:var(--mut)">${r.bm}</td><td style="text-align:right;font-weight:600" class="${ec}">${ed}</td></tr>`;}).join('');
   if(btChart)btChart.destroy();
@@ -766,6 +815,54 @@ function renderBt(data,params){
     {l:'VaR 95% (1-day)',v:rm.var95?rm.var95+'%':'—',s:'historical',c:rm.var95>3?'neg':'neu'},
     {l:'Correlation',v:rm.corrBm??'—',s:'vs benchmark',c:'neu'},
   ].map(c=>`<div class="sc"><div class="sl2">${c.l}</div><div class="sv ${c.c}">${c.v}</div><div class="ss">${c.s}</div></div>`).join('');
+
+  // ── Hypothetical Return card ──
+  const hypoCard = document.getElementById('hypo-card');
+  const hypoBody = document.getElementById('hypo-body');
+  if(s.hypoReturn!=null && s.irr!=null){
+    hypoCard.style.display='block';
+    const actualFinal   = s.finalValue;
+    const hypoFinal     = s.hypoFinal;
+    const gap           = Math.round((hypoFinal - actualFinal)*100)/100;
+    const gapPct        = Math.round((hypoFinal/actualFinal-1)*10000)/100;
+    const gapCol        = gap>=0?'var(--grn)':'var(--red)';
+    const deployed      = s.deployedPct;
+    const undeployed    = Math.round((100-deployed)*10)/10;
+
+    hypoBody.innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:.6rem;margin-bottom:1rem">
+        <div class="sc">
+          <div class="sl2">IRR (Daily → Annual)</div>
+          <div class="sv neu">${fmt(s.irr,'%')}</div>
+          <div class="ss">Internal Rate of Return</div>
+        </div>
+        <div class="sc">
+          <div class="sl2">Actual Final Value</div>
+          <div class="sv">\\$${actualFinal.toLocaleString()}</div>
+          <div class="ss">${deployed}% of days deployed</div>
+        </div>
+        <div class="sc">
+          <div class="sl2">Hypothetical Final Value</div>
+          <div class="sv ${gap>=0?'pos':'neg'}">\\$${hypoFinal.toLocaleString()}</div>
+          <div class="ss">if 100% of days invested at same IRR</div>
+        </div>
+      </div>
+      <div style="background:var(--sur2);border-radius:8px;padding:.85rem 1rem;font-size:.82rem;line-height:1.8;border:1px solid var(--bdr)">
+        <div style="font-weight:600;margin-bottom:.35rem">What does this mean?</div>
+        Your strategy achieved an IRR of <strong>${fmt(s.irr,'%')}</strong> on invested capital.
+        However, your capital sat in cash for <strong>${undeployed}%</strong> of the period (${s.cashDays} days) waiting for entry conditions to be met.
+        If that same IRR had been earned on every day — including cash-idle days — your \\$${(params.capital||10000).toLocaleString()} would have grown to
+        <strong style="color:${gapCol}">\\$${hypoFinal.toLocaleString()}</strong>
+        — a difference of <strong style="color:${gapCol}">${gap>=0?'+':''}\\$${Math.abs(gap).toLocaleString()} (${fmt(gapPct,'%')})</strong>
+        vs your actual result.
+        <div style="margin-top:.5rem;font-size:.75rem;color:var(--mut)">
+          Note: Hypothetical return assumes no transaction costs, perfect reinvestment, and identical IRR maintained across idle periods — for illustrative purposes only.
+        </div>
+      </div>
+    `;
+  } else {
+    hypoCard.style.display='none';
+  }
 }
 
 // ── VALUATION
