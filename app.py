@@ -144,10 +144,67 @@ def run_backtest(ticker, start, end, capital, rsi_buy, rsi_sell_enabled, rsi_sel
     maxdd = round(((pd.Series(ev)-rm)/rm).min()*100,1)
     tr = [t["returnPct"] for t in trades]
     wins = [r for r in tr if r>0]; losses = [r for r in tr if r<=0]
-    stats = {"totalReturn":round((ev[-1]/capital-1)*100,1),"finalValue":round(ev[-1]),
+
+    # Days spanned & annualised return
+    date_start = pd.Timestamp(start); date_end = pd.Timestamp(end)
+    days_spanned = (date_end - date_start).days
+    years_spanned = days_spanned / 365.25
+    total_ret = (ev[-1]/capital - 1)
+    annualised_ret = round(((1 + total_ret) ** (1/years_spanned) - 1) * 100, 2) if years_spanned > 0 else 0
+
+    # Time-Weighted Return (TWA) — chain-link sub-period returns
+    if trades:
+        sub_rets = [(1 + t["returnPct"]/100) for t in trades]
+        twa = round((np.prod(sub_rets) - 1) * 100, 2)
+    else:
+        twa = 0.0
+
+    # Money-Weighted Return (MWA / IRR approximation)
+    # Cash flows: -capital at start, +final value at end, +PnL at each trade exit
+    try:
+        from numpy_financial import irr as np_irr
+        cf = [-capital]
+        for t in trades:
+            cf.append(t["pnl"])
+        cf[-1] += ev[-1]  # add final portfolio value to last cash flow
+        mwa_daily = np_irr(cf)
+        mwa = round((((1 + mwa_daily) ** 252) - 1) * 100, 2) if mwa_daily is not None and not np.isnan(mwa_daily) else None
+    except Exception:
+        # Fallback: simple approximation
+        invested_days = sum((pd.Timestamp(t["exitDate"]) - pd.Timestamp(t["entryDate"])).days for t in trades)
+        if invested_days > 0 and trades:
+            total_pnl = sum(t["pnl"] for t in trades)
+            mwa = round((total_pnl / capital) / (invested_days / 365.25) * 100, 2)
+        else:
+            mwa = None
+
+    # Label each equity point as 'holding' or 'cash'
+    holding_dates = set()
+    for t in trades:
+        holding_dates.add(t["entryDate"])
+        holding_dates.add(t["exitDate"])
+        # fill dates between entry and exit
+    trade_ranges = [(t["entryDate"], t["exitDate"]) for t in trades]
+    def in_trade_on(d):
+        for en, ex in trade_ranges:
+            if en <= d <= ex:
+                return True
+        return False
+    for e in equity:
+        e["period"] = "holding" if in_trade_on(e["date"]) else "cash"
+
+    # Holding days vs cash days
+    holding_days = sum(1 for e in equity if e["period"] == "holding")
+    cash_days    = len(equity) - holding_days
+    deployed_pct = round(holding_days / len(equity) * 100, 1) if equity else 0
+
+    stats = {"totalReturn":round(total_ret*100,1),"finalValue":round(ev[-1]),
              "totalTrades":len(trades),"winRate":round(len(wins)/len(tr)*100,1) if tr else 0,
              "avgWin":round(np.mean(wins),2) if wins else 0,"avgLoss":round(np.mean(losses),2) if losses else 0,
-             "sharpe":sharpe,"maxDrawdown":maxdd,"bmReturn":bm_ret}
+             "sharpe":sharpe,"maxDrawdown":maxdd,"bmReturn":bm_ret,
+             "daysSpanned":days_spanned,"annualisedReturn":annualised_ret,
+             "twa":twa,"mwa":mwa,
+             "holdingDays":holding_days,"cashDays":cash_days,"deployedPct":deployed_pct}
 
     # Risk metrics
     bm_df2 = yf.download(bm_name, start=start, end=end, progress=False, auto_adjust=True)
@@ -397,7 +454,7 @@ tr:hover td{background:var(--sur2)}
     <div class="sw" id="bt-sw"><div class="sp"></div><p>Fetching data &amp; running simulation…</p></div>
     <div id="bt-res" style="display:none">
       <div class="sb"><div class="sn" id="bt-sname">—</div><div class="st" id="bt-stick">—</div><div class="sp2" id="bt-sper">—</div></div>
-      <div class="sg" id="bt-stats"></div>
+      <div class="sg" id="bt-stats" style="grid-template-columns:repeat(4,1fr)"></div>
       <div class="card" style="margin-bottom:1rem">
         <div class="ch">Strategy vs Benchmark</div>
         <div class="cb" style="overflow-x:auto">
@@ -652,6 +709,11 @@ function renderBt(data,params){
     {l:'Avg Loss',v:fmt(s.avgLoss,'%'),s:'per loser',c:'neg'},
     {l:'Sharpe',v:s.sharpe,s:'risk-adj return',c:s.sharpe>=1?'pos':'neu'},
     {l:'Max Drawdown',v:fmt(s.maxDrawdown,'%'),s:'peak→trough',c:s.maxDrawdown<=-20?'neg':'neu'},
+    {l:'Days Spanned',v:s.daysSpanned,s:`${s.holdingDays}d holding · ${s.cashDays}d cash`,c:'neu'},
+    {l:'Annualised Return',v:fmt(s.annualisedReturn,'%'),s:'CAGR over period',c:s.annualisedReturn>=0?'pos':'neg'},
+    {l:'TWA Return',v:fmt(s.twa,'%'),s:'time-weighted',c:s.twa>=0?'pos':'neg'},
+    {l:'MWA Return',v:s.mwa!=null?fmt(s.mwa,'%'):'—',s:'money-weighted',c:s.mwa!=null&&s.mwa>=0?'pos':'neg'},
+    {l:'Capital Deployed',v:s.deployedPct+'%',s:`${s.holdingDays} of ${s.daysSpanned} days`,c:'neu'},
   ].map(c=>`<div class="sc"><div class="sl2">${c.l}</div><div class="sv ${c.c}">${c.v}</div><div class="ss">${c.s}</div></div>`).join('');
   const rm=data.riskMetrics||{};
   document.getElementById('bt-cmp').innerHTML=[
@@ -663,13 +725,35 @@ function renderBt(data,params){
     {m:'Tracking Error',st:rm.trackingError?rm.trackingError+'%':'—',bm:'0%',edge:null},
     {m:'Correlation',st:rm.corrBm??'—',bm:'1.00',edge:null},
     {m:'Total Trades',st:s.totalTrades,bm:'1 (hold)',edge:null},
+    {m:'Days Spanned',st:s.daysSpanned+' days',bm:s.daysSpanned+' days',edge:null},
+    {m:'Annualised Return',st:fmt(s.annualisedReturn,'%'),bm:'—',edge:null},
+    {m:'Time-Weighted (TWA)',st:fmt(s.twa,'%'),bm:'—',edge:null},
+    {m:'Money-Weighted (MWA)',st:s.mwa!=null?fmt(s.mwa,'%'):'—',bm:'—',edge:null},
+    {m:'Capital Deployed',st:s.deployedPct+'%',bm:'100%',edge:null},
   ].map(r=>{const ec=r.edge!==null?(r.edge>=0?'pos':'neg'):'';const ed=r.edge!==null?fmt(r.edge,r.es||''):'—';
     return`<tr><td style="color:var(--mut);font-size:.76rem">${r.m}</td><td style="text-align:right;font-weight:600">${r.st}</td><td style="text-align:right;color:var(--mut)">${r.bm}</td><td style="text-align:right;font-weight:600" class="${ec}">${ed}</td></tr>`;}).join('');
   if(btChart)btChart.destroy();
-  btChart=new Chart(document.getElementById('bt-chart'),{type:'line',data:{labels:data.equity.map(e=>e.date),datasets:[
-    {label:(data.stockName||ticker)+' Strategy',data:data.equity.map(e=>e.value),borderColor:'#2563EB',borderWidth:2,pointRadius:0,tension:.1,fill:false},
-    {label:bmlbl,data:data.bmEquity.map(e=>e.value),borderColor:'#CBD5E1',borderWidth:1.5,pointRadius:0,borderDash:[5,4],fill:false}
-  ]},options:chartOpts('$')});
+  // Build segment-coloured strategy line: green=holding, grey=cash
+  const eqLabels = data.equity.map(e=>e.date);
+  const eqVals   = data.equity.map(e=>e.value);
+  const periods  = data.equity.map(e=>e.period||'cash');
+  // Create point background colours
+  const ptColors = periods.map(p=>p==='holding'?'#2563EB':'#94A3B8');
+  const segColors = eqVals.map((_,i)=>{
+    if(i===0) return periods[0]==='holding'?'rgba(37,99,235,0.9)':'rgba(148,163,184,0.6)';
+    return periods[i]==='holding'?'rgba(37,99,235,0.9)':'rgba(148,163,184,0.6)';
+  });
+  // Annotation plugin not available — use two overlapping datasets instead
+  // Dataset 1: holding periods (null where cash)
+  const holdingData = eqVals.map((v,i)=>periods[i]==='holding'?v:null);
+  const cashData    = eqVals.map((v,i)=>periods[i]==='cash'?v:null);
+  // Fill gaps so lines connect at transitions
+  // Use spanGaps to connect through nulls
+  btChart=new Chart(document.getElementById('bt-chart'),{type:'line',data:{labels:eqLabels,datasets:[
+    {label:'📍 Holding Period',data:holdingData,borderColor:'#2563EB',backgroundColor:'rgba(37,99,235,0.08)',borderWidth:2.5,pointRadius:0,tension:0,fill:true,spanGaps:true},
+    {label:'💰 Cash (Ready to Deploy)',data:cashData,borderColor:'#94A3B8',backgroundColor:'rgba(148,163,184,0.05)',borderWidth:1.5,pointRadius:0,tension:0,fill:true,spanGaps:true},
+    {label:bmlbl,data:data.bmEquity.map(e=>e.value),borderColor:'#F59E0B',borderWidth:1.5,pointRadius:0,borderDash:[5,4],fill:false,tension:0},
+  ]},options:{...chartOpts('$'),plugins:{...chartOpts('$').plugins,legend:{labels:{color:'#64748B',font:{family:'Inter',size:11},usePointStyle:true}}}}});
   document.getElementById('bt-tc').textContent=data.trades.length+' trades';
   document.getElementById('bt-trades').innerHTML=data.trades.map(t=>`<tr>
     <td>${t.entryDate}</td><td>${t.exitDate}</td><td>$${t.entryPrice}</td><td>$${t.exitPrice}</td>
