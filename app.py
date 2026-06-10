@@ -400,6 +400,146 @@ HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>Investment Mandate & Capital Deployment</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js">
+
+// ══════════════════════════════════════════════════════
+// FINANCIALS — Calcbench integration
+// ══════════════════════════════════════════════════════
+let cbData = null; // full response from server
+
+function showFinTab(tab, btn){
+  document.querySelectorAll('.cb-tab').forEach(t=>t.style.display='none');
+  document.querySelectorAll('#cb-tabs .nb').forEach(b=>b.classList.remove('active'));
+  document.getElementById('cb-tab-'+tab).style.display='block';
+  btn.classList.add('active');
+}
+
+async function runFinancials(){
+  const btn = document.getElementById('cb-run');
+  const email  = document.getElementById('cb-email').value.trim();
+  const pass   = document.getElementById('cb-pass').value;
+  const ticker = document.getElementById('cb-ticker').value.trim().toUpperCase();
+  showErr('cb-err','');
+  if(!email||!pass||!ticker){ showErr('cb-err','Enter your Calcbench email, password and a ticker.'); return; }
+  document.getElementById('cb-res').style.display='none';
+  document.getElementById('cb-sw').style.display='flex';
+  btn.disabled=true; btn.textContent='Fetching…';
+  try{
+    const r = await fetch('/financials/fetch', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({email, password:pass, ticker})});
+    const data = await r.json();
+    if(data.error) throw new Error(data.error);
+    cbData = data;
+    renderFinancials(data);
+    document.getElementById('cb-sw').style.display='none';
+    document.getElementById('cb-res').style.display='block';
+  } catch(e){
+    showErr('cb-err', e.message);
+    document.getElementById('cb-sw').style.display='none';
+  } finally {
+    btn.disabled=false; btn.textContent='▶ Fetch';
+  }
+}
+
+function switchFiling(){
+  if(!cbData) return;
+  const sel = document.getElementById('cb-filing-sel').value;
+  const filing = cbData.filings.find(f=>f.id===sel);
+  if(filing) renderFilingData(filing);
+}
+
+function renderFinancials(data){
+  document.getElementById('cb-company-name').textContent = data.companyName || data.ticker;
+  document.getElementById('cb-company-ticker').textContent = data.ticker;
+  document.getElementById('cb-filing-date').textContent = data.filings?.[0]?.filedOn || '—';
+  const srcLink = document.getElementById('cb-source-link');
+  srcLink.href = `https://www.calcbench.com/financial_statements/${data.ticker}`;
+
+  // Populate filing selector
+  const sel = document.getElementById('cb-filing-sel');
+  sel.innerHTML = (data.filings||[]).map(f=>
+    `<option value="${f.id}">${f.type} — ${f.period} (filed ${f.filedOn})</option>`
+  ).join('');
+
+  // Render first filing
+  if(data.filings?.[0]) renderFilingData(data.filings[0]);
+}
+
+function renderFilingData(filing){
+  document.getElementById('cb-income-title').textContent  = `Income Statement — ${filing.period}`;
+  document.getElementById('cb-balance-title').textContent  = `Balance Sheet — ${filing.period}`;
+  document.getElementById('cb-cashflow-title').textContent = `Cash Flow Statement — ${filing.period}`;
+  document.getElementById('cb-filing-date').textContent    = `${filing.type} · ${filing.period} · filed ${filing.filedOn}`;
+
+  renderFinTable('cb-income-body',  filing.income);
+  renderFinTable('cb-balance-body', filing.balance);
+  renderFinTable('cb-cashflow-body',filing.cashflow);
+  renderCommentary('cb-commentary-body', filing.commentary);
+}
+
+function fmtNum(v){
+  if(v==null||v==='') return '—';
+  const n = parseFloat(v);
+  if(isNaN(n)) return v;
+  const abs = Math.abs(n);
+  const sign = n<0?'(':'';
+  const end  = n<0?')':'';
+  if(abs>=1e9) return sign+'$'+(abs/1e9).toFixed(2)+'B'+end;
+  if(abs>=1e6) return sign+'$'+(abs/1e6).toFixed(1)+'M'+end;
+  if(abs>=1e3) return sign+'$'+(abs/1e3).toFixed(0)+'K'+end;
+  return sign+'$'+abs.toLocaleString()+end;
+}
+
+function renderFinTable(elId, rows){
+  const el = document.getElementById(elId);
+  if(!rows||!rows.length){ el.innerHTML='<div style="color:var(--mut);font-size:.8rem;padding:.5rem">No data available</div>'; return; }
+  // Group by section
+  let html = '<table style="width:100%;border-collapse:collapse;font-size:.8rem">';
+  let lastSection = null;
+  rows.forEach(row=>{
+    if(row.section && row.section !== lastSection){
+      html += `<tr><td colspan="3" style="padding:.55rem .75rem .25rem;font-size:.65rem;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--mut);background:var(--sur2);border-top:2px solid var(--bdr)">${row.section}</td></tr>`;
+      lastSection = row.section;
+    }
+    const isTotal = row.isTotal;
+    const style = isTotal ? 'font-weight:700;border-top:1px solid var(--bdr2)' : '';
+    const indent = row.indent>0 ? `padding-left:${0.75+row.indent*1}rem` : 'padding-left:.75rem';
+    const val = fmtNum(row.value);
+    const cls = parseFloat(row.value)<0 ? 'neg' : '';
+    html += `<tr>
+      <td style="${indent};padding-top:.42rem;padding-bottom:.42rem;${style};border-top:1px solid var(--bdr)">${row.label}</td>
+      <td style="text-align:right;padding:.42rem .75rem;${style};border-top:1px solid var(--bdr)" class="${cls}">${val}</td>
+      <td style="text-align:right;padding:.42rem .75rem;color:var(--mut);font-size:.72rem;border-top:1px solid var(--bdr)">${row.unit||''}</td>
+    </tr>`;
+  });
+  html += '</table>';
+  el.innerHTML = html;
+}
+
+function renderCommentary(elId, sections){
+  const el = document.getElementById(elId);
+  if(!sections||!sections.length){
+    el.innerHTML='<div style="color:var(--mut);font-size:.8rem">No commentary available for this filing.</div>';
+    return;
+  }
+  el.innerHTML = sections.map((s,i)=>`
+    <div style="border:1px solid var(--bdr);border-radius:8px;margin-bottom:.65rem;overflow:hidden">
+      <div onclick="toggleComm(${i})" style="padding:.7rem 1rem;display:flex;justify-content:space-between;align-items:center;cursor:pointer;background:var(--sur2)">
+        <div style="font-size:.82rem;font-weight:600">${s.title}</div>
+        <span id="comm-icon-${i}" style="color:var(--mut);font-size:.9rem">▼</span>
+      </div>
+      <div id="comm-body-${i}" style="display:none;padding:.85rem 1rem;font-size:.78rem;line-height:1.75;color:var(--txt);max-height:400px;overflow-y:auto;white-space:pre-wrap">${s.text}</div>
+    </div>`).join('');
+}
+
+function toggleComm(i){
+  const body = document.getElementById('comm-body-'+i);
+  const icon = document.getElementById('comm-icon-'+i);
+  const open = body.style.display==='none';
+  body.style.display = open?'block':'none';
+  icon.textContent   = open?'▲':'▼';
+}
+
 </script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
 <style>
@@ -512,6 +652,7 @@ tr:hover td{background:var(--sur2)}
     <button class="nb" onclick="showPage('pair',this)">Pair</button>
     <button class="nb" onclick="showPage('portfolio',this)">Portfolio</button>
     <button class="nb" onclick="showPage('monitor',this)">Live Monitor</button>
+    <button class="nb" onclick="showPage('financials',this)">Financials</button>
     <button class="nb" onclick="showPage('records',this)">Records</button>
   </nav>
 </header>
@@ -946,6 +1087,107 @@ tr:hover td{background:var(--sur2)}
     </div>
   </div>
 
+</div>
+</div>
+
+<!-- FINANCIALS -->
+<div id="pg-financials" class="pg">
+<div style="padding:1rem;max-width:1200px">
+
+  <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:1rem;flex-wrap:wrap;gap:.75rem">
+    <div>
+      <div style="font-size:1rem;font-weight:700">Financial Statements</div>
+      <div style="font-size:.78rem;color:var(--mut)">Powered by Calcbench — latest 10-K &amp; 10-Q filings, income statement, balance sheet, cash flow, and management commentary.</div>
+    </div>
+    <a href="https://www.calcbench.com" target="_blank" style="font-size:.75rem;color:var(--acc);text-decoration:none;border:1px solid var(--bdr);padding:.3rem .7rem;border-radius:6px;background:var(--sur)">↗ Open Calcbench</a>
+  </div>
+
+  <!-- Credentials + Search -->
+  <div class="card" style="margin-bottom:1rem">
+    <div class="ch">Calcbench Credentials &amp; Search</div>
+    <div class="cb">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:.75rem;align-items:end">
+        <div class="fd" style="margin:0"><label>Calcbench Email</label><input type="email" id="cb-email" placeholder="you@example.com"/></div>
+        <div class="fd" style="margin:0"><label>Password</label><input type="password" id="cb-pass" placeholder="Calcbench password"/></div>
+        <div class="fd" style="margin:0"><label>Ticker Symbol</label><input id="cb-ticker" placeholder="e.g. AAPL, MSFT" style="text-transform:uppercase"/></div>
+        <button class="btn bp" style="width:auto;white-space:nowrap" id="cb-run" onclick="runFinancials()">▶ Fetch</button>
+      </div>
+      <div style="font-size:.68rem;color:var(--mut);margin-top:.5rem">
+        Credentials stored in-session only, never persisted. 
+        <a href="https://www.calcbench.com/join" target="_blank" style="color:var(--acc)">Sign up for Calcbench →</a>
+      </div>
+      <div class="er" id="cb-err"></div>
+    </div>
+  </div>
+
+  <div class="sw" id="cb-sw" style="display:none"><div class="sp"></div><p>Fetching from Calcbench…</p></div>
+
+  <div id="cb-res" style="display:none">
+
+    <!-- Stock header -->
+    <div class="sb" style="margin-bottom:1rem">
+      <div class="sn" id="cb-company-name">—</div>
+      <div class="st" id="cb-company-ticker">—</div>
+      <div class="sp2" id="cb-filing-date">—</div>
+      <a id="cb-source-link" href="#" target="_blank" style="margin-left:auto;font-size:.72rem;color:var(--acc);text-decoration:none;border:1px solid var(--bdr);padding:.2rem .55rem;border-radius:5px;background:var(--sur)">↗ View on Calcbench</a>
+    </div>
+
+    <!-- Filing selector -->
+    <div class="card" style="margin-bottom:1rem">
+      <div class="ch" style="display:flex;justify-content:space-between;align-items:center">
+        <span>Filing</span>
+        <div style="display:flex;gap:.4rem">
+          <select id="cb-filing-sel" onchange="switchFiling()" style="font-size:.78rem;padding:.3rem .5rem;width:auto"></select>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tabs -->
+    <div style="display:flex;gap:.2rem;margin-bottom:1rem;flex-wrap:wrap" id="cb-tabs">
+      <button class="nb active" onclick="showFinTab('income',this)">Income Statement</button>
+      <button class="nb" onclick="showFinTab('balance',this)">Balance Sheet</button>
+      <button class="nb" onclick="showFinTab('cashflow',this)">Cash Flow</button>
+      <button class="nb" onclick="showFinTab('commentary',this)">Management Commentary</button>
+    </div>
+
+    <!-- Income Statement -->
+    <div id="cb-tab-income" class="cb-tab">
+      <div class="card">
+        <div class="ch" id="cb-income-title">Income Statement</div>
+        <div class="cb" style="overflow-x:auto"><div id="cb-income-body"></div></div>
+      </div>
+    </div>
+
+    <!-- Balance Sheet -->
+    <div id="cb-tab-balance" class="cb-tab" style="display:none">
+      <div class="card">
+        <div class="ch" id="cb-balance-title">Balance Sheet</div>
+        <div class="cb" style="overflow-x:auto"><div id="cb-balance-body"></div></div>
+      </div>
+    </div>
+
+    <!-- Cash Flow -->
+    <div id="cb-tab-cashflow" class="cb-tab" style="display:none">
+      <div class="card">
+        <div class="ch" id="cb-cashflow-title">Cash Flow Statement</div>
+        <div class="cb" style="overflow-x:auto"><div id="cb-cashflow-body"></div></div>
+      </div>
+    </div>
+
+    <!-- Management Commentary -->
+    <div id="cb-tab-commentary" class="cb-tab" style="display:none">
+      <div class="card">
+        <div class="ch">Management Commentary &amp; Disclosures</div>
+        <div class="cb">
+          <div style="font-size:.72rem;color:var(--mut);margin-bottom:.75rem">
+            Key text disclosures from the filing — MD&amp;A, risk factors, business overview. Click any section to expand.
+          </div>
+          <div id="cb-commentary-body"></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
 </div>
 </div>
 
@@ -2405,6 +2647,236 @@ def get_monitor_log():
             return jsonify(json.load(f))
     return jsonify([])
 
+
+
+# ══════════════════════════════════════════════════════════════════════
+# CALCBENCH — Financial Statements
+# ══════════════════════════════════════════════════════════════════════
+import requests as cb_requests
+
+CB_BASE = "https://www.calcbench.com"
+
+# Key metrics to pull for each statement
+CB_INCOME_METRICS = [
+    ("Revenue",          "Revenue",                    ""),
+    ("Cost of Revenue",  "CostOfRevenue",               ""),
+    ("Gross Profit",     "GrossProfit",                 "total"),
+    ("R&D Expense",      "ResearchAndDevelopmentExpense",""),
+    ("SG&A Expense",     "SellingGeneralAdministrative", ""),
+    ("Operating Income", "OperatingIncomeLoss",          "total"),
+    ("Interest Expense", "InterestExpense",              ""),
+    ("Pretax Income",    "IncomeLossFromContinuingOperationsBeforeIncomeTaxes",""),
+    ("Income Tax",       "IncomeTaxExpenseBenefit",      ""),
+    ("Net Income",       "NetIncomeLoss",                "total"),
+    ("EPS (Basic)",      "EarningsPerShareBasic",        ""),
+    ("EPS (Diluted)",    "EarningsPerShareDiluted",      ""),
+    ("Shares (Diluted)", "WeightedAverageNumberOfDilutedSharesOutstanding",""),
+]
+CB_BALANCE_METRICS = [
+    ("Cash & Equivalents",        "CashAndCashEquivalentsAtCarryingValue",""),
+    ("Short-term Investments",    "ShortTermInvestments",                 ""),
+    ("Accounts Receivable",       "AccountsReceivableNetCurrent",         ""),
+    ("Inventory",                 "InventoryNet",                          ""),
+    ("Total Current Assets",      "AssetsCurrent",                        "total"),
+    ("PP&E Net",                  "PropertyPlantAndEquipmentNet",          ""),
+    ("Goodwill",                  "Goodwill",                              ""),
+    ("Total Assets",              "Assets",                                "total"),
+    ("Accounts Payable",          "AccountsPayableCurrent",                ""),
+    ("Short-term Debt",           "ShortTermBorrowings",                   ""),
+    ("Total Current Liabilities", "LiabilitiesCurrent",                   "total"),
+    ("Long-term Debt",            "LongTermDebt",                          ""),
+    ("Total Liabilities",         "Liabilities",                           "total"),
+    ("Total Equity",              "StockholdersEquity",                    "total"),
+]
+CB_CASHFLOW_METRICS = [
+    ("Operating Cash Flow",       "NetCashProvidedByUsedInOperatingActivities","total"),
+    ("Depreciation & Amortisation","DepreciationDepletionAndAmortization",""),
+    ("CapEx",                     "PaymentsToAcquirePropertyPlantAndEquipment",""),
+    ("Free Cash Flow",            "FreeCashFlow",                           "total"),
+    ("Investing Activities",      "NetCashProvidedByUsedInInvestingActivities","total"),
+    ("Financing Activities",      "NetCashProvidedByUsedInFinancingActivities","total"),
+    ("Dividends Paid",            "PaymentsOfDividends",                    ""),
+    ("Share Buybacks",            "PaymentsForRepurchaseOfCommonStock",      ""),
+    ("Net Change in Cash",        "CashAndCashEquivalentsPeriodIncreaseDecrease","total"),
+]
+CB_COMMENTARY_SECTIONS = [
+    ("Management Discussion & Analysis", "ManagementsDiscussionAndAnalysisOfFinancialConditionAndResultsOfOperations"),
+    ("Business Overview",                "Business"),
+    ("Risk Factors",                     "RiskFactors"),
+    ("Quantitative Market Risk",         "QuantitativeAndQualitativeDisclosuresAboutMarketRisk"),
+    ("Liquidity & Capital Resources",    "LiquidityAndCapitalResources"),
+    ("Critical Accounting Policies",     "CriticalAccountingPoliciesAndEstimates"),
+]
+
+def cb_login(email, password):
+    """Return authenticated requests.Session or raise."""
+    s = cb_requests.Session()
+    r = s.post(f"{CB_BASE}/account/LogOnAjax",
+               data={"email":email,"strng":password,"rememberMe":"true"}, timeout=15)
+    if r.text.strip().lower() != "true":
+        raise ValueError("Calcbench login failed — check your email and password.")
+    return s
+
+def cb_get_filings(session, ticker, n=4):
+    """Return the last n 10-K and 10-Q filings for ticker."""
+    url = f"{CB_BASE}/api/filings?tickers={ticker}&filing_types=10-K,10-Q&number_of_filings={n*2}"
+    try:
+        r = session.get(url, timeout=15)
+        filings = r.json()
+        # Filter to 10-K and 10-Q, sort by date desc
+        filings = [f for f in filings if f.get("formType","") in ("10-K","10-Q")]
+        filings.sort(key=lambda f: f.get("periodOfReport",""), reverse=True)
+        return filings[:n]
+    except:
+        return []
+
+def cb_get_metric(session, ticker, metric, period_type, fiscal_year, fiscal_period):
+    """Fetch one standardized metric value."""
+    try:
+        payload = {
+            "start_year": fiscal_year, "start_period": fiscal_period,
+            "end_year":   fiscal_year, "end_period":   fiscal_period,
+            "company_identifiers": [ticker],
+            "metrics": [metric],
+        }
+        r = session.post(f"{CB_BASE}/api/NormalizedValues",
+                         json=payload, timeout=15)
+        data = r.json()
+        if data:
+            return data[0].get("value")
+    except:
+        pass
+    return None
+
+def cb_get_statement_rows(session, ticker, metrics, fiscal_year, fiscal_period):
+    """Fetch all metrics for a statement in one batch."""
+    try:
+        metric_names = [m[1] for m in metrics]
+        payload = {
+            "start_year": fiscal_year, "start_period": fiscal_period,
+            "end_year":   fiscal_year, "end_period":   fiscal_period,
+            "company_identifiers": [ticker],
+            "metrics": metric_names,
+        }
+        r = session.post(f"{CB_BASE}/api/NormalizedValues", json=payload, timeout=20)
+        raw = r.json()
+        # Index by metric name
+        val_map = {}
+        for item in raw:
+            val_map[item.get("metric","").lower()] = item.get("value")
+        rows = []
+        for label, metric, row_type in metrics:
+            v = val_map.get(metric.lower())
+            rows.append({
+                "label":   label,
+                "value":   v,
+                "isTotal": row_type == "total",
+                "indent":  0,
+                "section": "",
+                "unit":    "USD" if v is not None else "",
+            })
+        return rows
+    except Exception as ex:
+        return [{"label":"Error fetching data","value":str(ex),"isTotal":False,"indent":0,"section":"","unit":""}]
+
+def cb_get_commentary(session, ticker, accession_no):
+    """Fetch text disclosures for a filing."""
+    sections = []
+    for title, tag in CB_COMMENTARY_SECTIONS:
+        try:
+            url = f"{CB_BASE}/api/disclosures?ticker={ticker}&disclosure_type=AS_REPORTED&accession_number={accession_no}&disclosure_field={tag}"
+            r = session.get(url, timeout=20)
+            data = r.json()
+            if data and isinstance(data, list) and data[0].get("disclosure_text"):
+                text = data[0]["disclosure_text"]
+                # Strip HTML tags simply
+                import re as _re
+                text = _re.sub(r"<[^>]+>", " ", text)
+                text = _re.sub(r"\s+", " ", text).strip()
+                if len(text) > 100:
+                    sections.append({"title": title, "text": text[:15000]})
+        except:
+            continue
+    return sections
+
+def cb_period_from_filing(filing):
+    """Extract fiscal year and period integer from a filing dict."""
+    period = filing.get("periodOfReport","")  # e.g. "2024-06-30"
+    form   = filing.get("formType","")
+    try:
+        import datetime as _dt
+        dt = _dt.datetime.strptime(period[:10], "%Y-%m-%d")
+        year = dt.year
+        month = dt.month
+        if form == "10-K":
+            period_int = 0  # annual
+        else:
+            q = (month-1)//3 + 1
+            period_int = q
+        return year, period_int
+    except:
+        return None, None
+
+@app.route("/financials/fetch", methods=["POST"])
+def financials_fetch():
+    d = request.json
+    ticker   = (d.get("ticker") or "").upper().strip()
+    email    = d.get("email","")
+    password = d.get("password","")
+    if not ticker or not email or not password:
+        return jsonify({"error":"Ticker, email and password are required."}), 400
+    try:
+        session  = cb_login(email, password)
+        filings  = cb_get_filings(session, ticker, n=6)
+        if not filings:
+            # Fallback: try direct company lookup
+            co_url = f"{CB_BASE}/api/companies?tickers={ticker}"
+            co_r   = session.get(co_url, timeout=10).json()
+            company_name = co_r[0].get("name","") if co_r else ticker
+            return jsonify({"error": f"No 10-K/10-Q filings found for {ticker} on Calcbench. Check the ticker symbol."}), 400
+
+        # Get company name
+        try:
+            co_url  = f"{CB_BASE}/api/companies?tickers={ticker}"
+            co_data = session.get(co_url, timeout=10).json()
+            company_name = co_data[0].get("name", ticker) if co_data else ticker
+        except:
+            company_name = ticker
+
+        result_filings = []
+        for filing in filings[:4]:  # limit to 4 filings
+            fy, fp = cb_period_from_filing(filing)
+            accession = filing.get("accession_number","")
+            period_label = filing.get("periodOfReport","")[:10]
+            filed_on     = filing.get("filed","")[:10]
+            form_type    = filing.get("formType","")
+
+            income   = cb_get_statement_rows(session, ticker, CB_INCOME_METRICS,   fy, fp) if fy else []
+            balance  = cb_get_statement_rows(session, ticker, CB_BALANCE_METRICS,  fy, fp) if fy else []
+            cashflow = cb_get_statement_rows(session, ticker, CB_CASHFLOW_METRICS, fy, fp) if fy else []
+            commentary = cb_get_commentary(session, ticker, accession)
+
+            result_filings.append({
+                "id":        accession or f"{form_type}-{period_label}",
+                "type":      form_type,
+                "period":    period_label,
+                "filedOn":   filed_on,
+                "income":    income,
+                "balance":   balance,
+                "cashflow":  cashflow,
+                "commentary":commentary,
+                "sourceUrl": f"https://www.calcbench.com/financial_statements/{ticker}",
+            })
+
+        return jsonify({
+            "ticker":      ticker,
+            "companyName": company_name,
+            "filings":     result_filings,
+        })
+    except ValueError as ve:
+        return jsonify({"error": str(ve)}), 401
+    except Exception as ex:
+        return jsonify({"error": f"Calcbench error: {str(ex)}"}), 500
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
