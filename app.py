@@ -511,6 +511,7 @@ tr:hover td{background:var(--sur2)}
     <button class="nb" onclick="showPage('valuation',this)">Valuation</button>
     <button class="nb" onclick="showPage('pair',this)">Pair</button>
     <button class="nb" onclick="showPage('portfolio',this)">Portfolio</button>
+    <button class="nb" onclick="showPage('monitor',this)">Live Monitor</button>
     <button class="nb" onclick="showPage('records',this)">Records</button>
   </nav>
 </header>
@@ -871,6 +872,83 @@ tr:hover td{background:var(--sur2)}
   </main>
 </div></div>
 
+<!-- LIVE MONITOR -->
+<div id="pg-monitor" class="pg">
+<div style="padding:1rem;max-width:1100px">
+
+  <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:1rem;flex-wrap:wrap;gap:.75rem">
+    <div>
+      <div style="font-size:1rem;font-weight:700">Live Monitoring</div>
+      <div style="font-size:.78rem;color:var(--mut)">Conditions checked daily at 7:00 AM AEST. Alerts sent via email &amp; Google Calendar when matched.</div>
+    </div>
+    <button class="btn bp" style="width:auto" onclick="saveMonitorConfig()">💾 Save Config</button>
+  </div>
+
+  <!-- Notification Settings -->
+  <div class="card" style="margin-bottom:1rem">
+    <div class="ch">Notification Settings</div>
+    <div class="cb">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+        <div>
+          <div class="sl">Email</div>
+          <div class="fd"><label>Your Email Address</label><input type="email" id="mon-email" placeholder="you@example.com"/></div>
+          <div class="fd"><label>SMTP Host</label><input id="mon-smtp-host" placeholder="smtp.gmail.com"/></div>
+          <div class="r2">
+            <div class="fd"><label>SMTP Port</label><input type="number" id="mon-smtp-port" value="587"/></div>
+            <div class="fd"><label>From Email</label><input id="mon-smtp-from" placeholder="alerts@yourdomain.com"/></div>
+          </div>
+          <div class="fd"><label>SMTP Password / App Password</label><input type="password" id="mon-smtp-pass" placeholder="Gmail app password…"/></div>
+          <div style="font-size:.68rem;color:var(--mut)">For Gmail: use an App Password (Google Account → Security → App Passwords)</div>
+        </div>
+        <div>
+          <div class="sl">Google Calendar</div>
+          <div class="fd"><label>Calendar ID</label><input id="mon-cal-id" placeholder="yourname@gmail.com or calendar ID"/></div>
+          <div class="fd"><label>Service Account JSON Key (path or paste)</label><textarea id="mon-cal-key" placeholder='Paste service account JSON key here, or leave blank to skip Google Calendar...' style="min-height:100px;font-size:.72rem;font-family:monospace"></textarea></div>
+          <div style="font-size:.68rem;color:var(--mut)">Create a Google Cloud service account with Calendar API access. Share your calendar with the service account email.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Watchlist Builder -->
+  <div class="card" style="margin-bottom:1rem">
+    <div class="ch" style="display:flex;justify-content:space-between;align-items:center">
+      <span>Watchlist Conditions</span>
+      <button class="btn bg" style="padding:.28rem .7rem;font-size:.75rem" onclick="addMonitorItem()">+ Add Security</button>
+    </div>
+    <div class="cb">
+      <div style="font-size:.72rem;color:var(--mut);margin-bottom:.85rem">
+        Each row is one security. Set the conditions to watch — leave fields blank to skip. Use AND/OR to combine.
+        The system fetches live data via Yahoo Finance each day at 7 AM AEST and checks whether conditions are met.
+      </div>
+      <div id="mon-list"></div>
+    </div>
+  </div>
+
+  <!-- Status / Log -->
+  <div class="card" style="margin-bottom:1rem">
+    <div class="ch" style="display:flex;justify-content:space-between;align-items:center">
+      <span>Status &amp; Alert Log</span>
+      <div style="display:flex;gap:.5rem">
+        <button class="btn bg" style="padding:.28rem .7rem;font-size:.75rem" onclick="testMonitor()">▶ Test Now</button>
+        <button class="btn bg" style="padding:.28rem .7rem;font-size:.75rem" onclick="clearMonitorLog()">Clear Log</button>
+      </div>
+    </div>
+    <div class="cb">
+      <div style="display:flex;align-items:center;gap:.65rem;margin-bottom:.75rem">
+        <div id="mon-status-dot" style="width:10px;height:10px;border-radius:50%;background:#CBD5E1;flex-shrink:0"></div>
+        <div id="mon-status-txt" style="font-size:.8rem;color:var(--mut)">Not configured</div>
+        <div id="mon-next-run" style="font-size:.72rem;color:var(--mut);margin-left:auto"></div>
+      </div>
+      <div id="mon-log" style="background:var(--sur2);border:1px solid var(--bdr);border-radius:6px;padding:.65rem;font-size:.75rem;font-family:monospace;max-height:220px;overflow-y:auto;line-height:1.8;color:var(--txt)">
+        <span style="color:var(--mut)">No alerts yet. Configure conditions above and hit Save Config, or Test Now to run immediately.</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+</div>
+
 <!-- RECORDS -->
 <div id="pg-records" class="pg">
 <div style="padding:1rem">
@@ -1157,6 +1235,10 @@ function calcDates(pfx, changed){
 
 window.addEventListener('DOMContentLoaded',()=>{
   ['bt','pair'].forEach(pfx=>calcDates(pfx,null));
+  // Pre-populate 2 monitor rows
+  addMonitorItem(); addMonitorItem();
+  // Load saved monitor config from server
+  loadMonitorConfig();
 });
 // ───────────────────────────────────────────────────────────────────────
 
@@ -1707,6 +1789,163 @@ function renderRecs(){
 function filterRecs(){const q=document.getElementById('rec-search').value.toLowerCase();fetch('/records').then(r=>r.json()).then(recs=>{const filtered=q?recs.filter(r=>JSON.stringify(r).toLowerCase().includes(q)):recs;document.getElementById('rec-list').innerHTML='';const tmp=recs;recs.length=0;recs.push(...filtered);renderRecs();recs.length=0;recs.push(...tmp);});}
 function delRec(id){if(!confirm('Delete?'))return;fetch('/records/'+id,{method:'DELETE'}).then(()=>renderRecs());}
 
+// ── LIVE MONITOR ───────────────────────────────────────────────────────
+let monCount = 0;
+const MON_STORE_KEY = 'imcd_monitor_config';
+
+// Security condition row template
+function addMonitorItem(cfg={}){
+  monCount++;
+  const id = monCount;
+  const div = document.createElement('div');
+  div.id = 'mon-item-'+id;
+  div.style.cssText = 'background:var(--sur2);border:1px solid var(--bdr);border-radius:8px;padding:.75rem;margin-bottom:.65rem';
+  div.innerHTML = `
+    <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.6rem">
+      <input placeholder="Ticker (e.g. AAPL)" value="${cfg.ticker||''}" class="mon-ticker" style="width:120px;font-size:.8rem;text-transform:uppercase;font-weight:600"/>
+      <div class="aog" style="width:90px;border-radius:5px;border:1px solid var(--bdr2)">
+        <button class="${(cfg.logic||'or')==='and'?'aa':''}" onclick="monToggleGate(this,'and')">AND</button>
+        <button class="${(cfg.logic||'or')==='or'?'ao':''}"  onclick="monToggleGate(this,'or')">OR</button>
+      </div>
+      <div style="font-size:.68rem;color:var(--mut);flex:1">All conditions must match (AND) or any one (OR)</div>
+      <button class="rmb" onclick="document.getElementById('mon-item-${id}').remove()">✕</button>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:.4rem">
+      <div><label style="font-size:.65rem;color:var(--mut);display:block;margin-bottom:.2rem">Price ≤ ($)</label>
+        <input type="number" class="mon-price" placeholder="blank=skip" value="${cfg.price||''}" style="font-size:.78rem"/></div>
+      <div><label style="font-size:.65rem;color:var(--mut);display:block;margin-bottom:.2rem">P/E ≤ (×)</label>
+        <input type="number" class="mon-pe" placeholder="blank=skip" value="${cfg.pe||''}" style="font-size:.78rem"/></div>
+      <div><label style="font-size:.65rem;color:var(--mut);display:block;margin-bottom:.2rem">P/B ≤ (×)</label>
+        <input type="number" class="mon-pb" placeholder="blank=skip" value="${cfg.pb||''}" style="font-size:.78rem"/></div>
+      <div><label style="font-size:.65rem;color:var(--mut);display:block;margin-bottom:.2rem">Volatility ≤ (%)</label>
+        <input type="number" class="mon-vol" placeholder="blank=skip" value="${cfg.vol||''}" style="font-size:.78rem"/></div>
+      <div><label style="font-size:.65rem;color:var(--mut);display:block;margin-bottom:.2rem">Drawdown ≤ (%)</label>
+        <input type="number" class="mon-dd" placeholder="blank=skip" value="${cfg.dd||''}" style="font-size:.78rem"/></div>
+      <div><label style="font-size:.65rem;color:var(--mut);display:block;margin-bottom:.2rem">Benchmark</label>
+        <select class="mon-bm" style="font-size:.78rem">
+          <option value=""${(!cfg.bm)?'selected':''}>— None —</option>
+          <option value="SPY"${cfg.bm==='SPY'?'selected':''}>SPY (S&P 500)</option>
+          <option value="QQQ"${cfg.bm==='QQQ'?'selected':''}>QQQ (Nasdaq)</option>
+          <option value="IWM"${cfg.bm==='IWM'?'selected':''}>IWM (Russell 2000)</option>
+          <option value="EFA"${cfg.bm==='EFA'?'selected':''}>EFA (Intl)</option>
+          <option value="custom"${cfg.bm==='custom'?'selected':''}>Custom…</option>
+        </select></div>
+      <div><label style="font-size:.65rem;color:var(--mut);display:block;margin-bottom:.2rem">IR vs BM ≥</label>
+        <input type="number" class="mon-ir" placeholder="blank=skip" value="${cfg.ir||''}" step="0.01" style="font-size:.78rem"/></div>
+      <div><label style="font-size:.65rem;color:var(--mut);display:block;margin-bottom:.2rem">RSI ≤</label>
+        <input type="number" class="mon-rsi" placeholder="blank=skip" value="${cfg.rsi||''}" style="font-size:.78rem"/></div>
+      <div><label style="font-size:.65rem;color:var(--mut);display:block;margin-bottom:.2rem">Notes (label)</label>
+        <input class="mon-note" placeholder="e.g. Buy signal" value="${cfg.note||''}" style="font-size:.78rem"/></div>
+    </div>`;
+  document.getElementById('mon-list').appendChild(div);
+}
+
+function monToggleGate(btn, mode){
+  const row = btn.closest('.aog');
+  row.querySelectorAll('button').forEach(b=>{ b.className=''; });
+  btn.className = mode==='and'?'aa':'ao';
+}
+
+function getMonitorItems(){
+  return [...document.querySelectorAll('[id^="mon-item-"]')].map(row=>({
+    ticker: row.querySelector('.mon-ticker')?.value.trim().toUpperCase()||'',
+    logic:  row.querySelector('.aog button.ao') ? 'or' : 'and',
+    price:  row.querySelector('.mon-price')?.value||null,
+    pe:     row.querySelector('.mon-pe')?.value||null,
+    pb:     row.querySelector('.mon-pb')?.value||null,
+    vol:    row.querySelector('.mon-vol')?.value||null,
+    dd:     row.querySelector('.mon-dd')?.value||null,
+    bm:     row.querySelector('.mon-bm')?.value||null,
+    ir:     row.querySelector('.mon-ir')?.value||null,
+    rsi:    row.querySelector('.mon-rsi')?.value||null,
+    note:   row.querySelector('.mon-note')?.value||'',
+  })).filter(r=>r.ticker);
+}
+
+function saveMonitorConfig(){
+  const cfg = {
+    email:    document.getElementById('mon-email')?.value||'',
+    smtpHost: document.getElementById('mon-smtp-host')?.value||'',
+    smtpPort: document.getElementById('mon-smtp-port')?.value||'587',
+    smtpFrom: document.getElementById('mon-smtp-from')?.value||'',
+    smtpPass: document.getElementById('mon-smtp-pass')?.value||'',
+    calId:    document.getElementById('mon-cal-id')?.value||'',
+    calKey:   document.getElementById('mon-cal-key')?.value||'',
+    items:    getMonitorItems(),
+  };
+  fetch('/monitor/config', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)})
+    .then(r=>r.json()).then(d=>{
+      if(d.ok){ monLog('✅ Config saved. Next check: 7:00 AM AEST tomorrow.','grn'); updateMonStatus(true); }
+      else monLog('❌ Save failed: '+(d.error||'unknown'),'red');
+    }).catch(e=>monLog('❌ '+e.message,'red'));
+}
+
+function testMonitor(){
+  monLog('⏳ Running check now…','mut');
+  fetch('/monitor/run',{method:'POST'}).then(r=>r.json()).then(d=>{
+    if(d.results){
+      d.results.forEach(r=>{
+        if(r.matched) monLog(`🔔 ${r.ticker}: ${r.reason} — alert sent`,'grn');
+        else monLog(`— ${r.ticker}: no match (${r.reason})`,'mut');
+      });
+    }
+    if(d.error) monLog('❌ '+d.error,'red');
+  }).catch(e=>monLog('❌ '+e.message,'red'));
+}
+
+function clearMonitorLog(){
+  document.getElementById('mon-log').innerHTML='<span style="color:var(--mut)">Log cleared.</span>';
+}
+
+function monLog(msg, tone){
+  const log = document.getElementById('mon-log');
+  const colors = {grn:'#16A34A',red:'#DC2626',mut:'#64748B',txt:'var(--txt)'};
+  const now = new Date().toLocaleTimeString('en-AU',{hour:'2-digit',minute:'2-digit'});
+  log.innerHTML += `<div><span style="color:#94A3B8">${now}</span> <span style="color:${colors[tone]||colors.txt}">${msg}</span></div>`;
+  log.scrollTop = log.scrollHeight;
+}
+
+function updateMonStatus(active){
+  const dot = document.getElementById('mon-status-dot');
+  const txt = document.getElementById('mon-status-txt');
+  const nxt = document.getElementById('mon-next-run');
+  if(dot){ dot.style.background = active ? '#16A34A' : '#CBD5E1'; }
+  if(txt){ txt.textContent = active ? 'Active — checking daily at 7:00 AM AEST' : 'Not configured'; }
+  if(nxt && active){
+    // Calculate next 7AM AEST
+    const now = new Date();
+    const aest = new Date(now.toLocaleString('en-AU',{timeZone:'Australia/Sydney'}));
+    const next = new Date(aest);
+    next.setHours(7,0,0,0);
+    if(aest >= next) next.setDate(next.getDate()+1);
+    nxt.textContent = 'Next: '+next.toLocaleDateString('en-AU',{weekday:'short',month:'short',day:'numeric'})+' 7:00 AM AEST';
+  }
+}
+
+// Load saved config on page load
+function loadMonitorConfig(){
+  fetch('/monitor/config').then(r=>r.json()).then(cfg=>{
+    if(!cfg || cfg.error) return;
+    ['email','smtp-host','smtp-port','smtp-from','smtp-pass','cal-id','cal-key'].forEach(k=>{
+      const el=document.getElementById('mon-'+k.replace('-','_').replace('-','_'));
+      // try both dash and underscore
+      const el2=document.getElementById('mon-'+k);
+      if(el2 && cfg[k.replace(/-./g,m=>m[1].toUpperCase())]) el2.value=cfg[k.replace(/-./g,m=>m[1].toUpperCase())]||'';
+    });
+    if(cfg.smtpHost) document.getElementById('mon-smtp-host').value=cfg.smtpHost;
+    if(cfg.smtpPort) document.getElementById('mon-smtp-port').value=cfg.smtpPort;
+    if(cfg.smtpFrom) document.getElementById('mon-smtp-from').value=cfg.smtpFrom;
+    if(cfg.email)    document.getElementById('mon-email').value=cfg.email;
+    if(cfg.calId)    document.getElementById('mon-cal-id').value=cfg.calId;
+    if(cfg.calKey)   document.getElementById('mon-cal-key').value=cfg.calKey;
+    // Load watchlist items
+    document.getElementById('mon-list').innerHTML='';
+    monCount=0;
+    (cfg.items||[]).forEach(item=>addMonitorItem(item));
+    if((cfg.items||[]).length) updateMonStatus(true);
+  }).catch(()=>{});
+}
+
 // ── SHARE
 function openShare(type){
   if(type==='bt'&&curBt){const s=curBt.data.stats;shareText=`📊 ${curBt.data.stockName} (${curBt.payload.ticker})\\n${curBt.payload.start} → ${curBt.payload.end}\\nReturn: ${fmt(s.totalReturn,'%')} | BM: ${fmt(s.bmReturn,'%')}\\nWin Rate: ${s.winRate}% | Trades: ${s.totalTrades} | Sharpe: ${s.sharpe}\\nMax DD: ${s.maxDrawdown}%`;}
@@ -1925,6 +2164,247 @@ def portfolio():
             "sectorWeights":sectors,"lookbackLabel":d.get("lookbackLabel","")})
     except Exception as ex:
         return jsonify({"error":str(ex)}), 500
+
+
+# ══════════════════════════════════════════════════════════════════════
+# LIVE MONITOR — config, runner, scheduler
+# ══════════════════════════════════════════════════════════════════════
+import smtplib, threading, time as _time
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
+MONITOR_CONFIG_FILE = "monitor_config.json"
+
+def load_monitor_config():
+    if os.path.exists(MONITOR_CONFIG_FILE):
+        with open(MONITOR_CONFIG_FILE) as f:
+            return json.load(f)
+    return {}
+
+def save_monitor_config_file(cfg):
+    with open(MONITOR_CONFIG_FILE, "w") as f:
+        json.dump(cfg, f)
+
+def send_email(cfg, subject, body):
+    """Send alert email via SMTP."""
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"]    = cfg.get("smtpFrom", cfg.get("email",""))
+        msg["To"]      = cfg.get("email","")
+        msg.attach(MIMEText(body, "html"))
+        with smtplib.SMTP(cfg.get("smtpHost","smtp.gmail.com"),
+                          int(cfg.get("smtpPort", 587))) as s:
+            s.ehlo(); s.starttls()
+            s.login(cfg.get("smtpFrom", cfg.get("email","")),
+                    cfg.get("smtpPass",""))
+            s.sendmail(msg["From"], msg["To"], msg.as_string())
+        return True, "sent"
+    except Exception as ex:
+        return False, str(ex)
+
+def add_google_calendar_event(cfg, title, description, dt_str):
+    """Create a Google Calendar event using service account."""
+    try:
+        import json as _json
+        from googleapiclient.discovery import build
+        from google.oauth2 import service_account
+        key_data = _json.loads(cfg.get("calKey","{}"))
+        creds = service_account.Credentials.from_service_account_info(
+            key_data, scopes=["https://www.googleapis.com/auth/calendar"])
+        service = build("googleapiclient.discovery", "v3", credentials=creds,
+                        serviceName="calendar", version="v3",
+                        discoveryServiceUrl="https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest")
+        event = {
+            "summary": title,
+            "description": description,
+            "start": {"dateTime": dt_str, "timeZone": "Australia/Sydney"},
+            "end":   {"dateTime": dt_str, "timeZone": "Australia/Sydney"},
+            "reminders": {"useDefault": False,
+                "overrides": [{"method":"email","minutes":10},{"method":"popup","minutes":0}]}
+        }
+        service.events().insert(calendarId=cfg.get("calId","primary"), body=event).execute()
+        return True, "created"
+    except ImportError:
+        return False, "google-api-python-client not installed"
+    except Exception as ex:
+        return False, str(ex)
+
+def check_conditions(item):
+    """Fetch live data for one ticker and check all conditions."""
+    ticker  = item.get("ticker","").upper().strip()
+    logic   = item.get("logic","or")
+    if not ticker:
+        return False, "no ticker"
+    try:
+        info   = yf.Ticker(ticker).info
+        hist   = yf.download(ticker, period="60d", progress=False, auto_adjust=True)
+        if hist.empty:
+            return False, "no data"
+        price  = float(hist["Close"].squeeze().iloc[-1])
+        rets   = hist["Close"].squeeze().pct_change().dropna()
+        vol    = round(float(rets.std())*np.sqrt(252)*100, 2)
+        peak   = float(hist["Close"].squeeze().cummax().iloc[-1])
+        drawdown = round((price-peak)/peak*100, 2)
+        pe     = info.get("trailingPE")
+        pb     = info.get("priceToBook")
+        # RSI
+        rsi_s  = compute_rsi(hist["Close"].squeeze())
+        rsi_v  = float(rsi_s.iloc[-1]) if not np.isnan(rsi_s.iloc[-1]) else None
+        # IR vs benchmark
+        ir_val = None
+        bm_ticker = item.get("bm","")
+        if bm_ticker and bm_ticker not in ("", "custom"):
+            try:
+                bm_h = yf.download(bm_ticker, period="60d", progress=False, auto_adjust=True)
+                if not bm_h.empty:
+                    sr = rets.iloc[-min(len(rets),len(bm_h)-1):]
+                    br = bm_h["Close"].squeeze().pct_change().dropna().iloc[-len(sr):]
+                    mn = min(len(sr),len(br))
+                    if mn > 5:
+                        active = sr.iloc[-mn:].values - br.iloc[-mn:].values
+                        te = float(np.std(active))*np.sqrt(252)*100
+                        ar = float(np.mean(active))*252*100
+                        ir_val = round(ar/te,3) if te>0 else None
+            except: pass
+
+        checks = []
+        reasons_pass = []
+        reasons_fail = []
+
+        def chk(label, cond_val, actual, fmt_actual):
+            if cond_val is None or cond_val == "": return
+            passed = cond_val(actual) if callable(cond_val) else False
+            checks.append(passed)
+            if passed: reasons_pass.append(f"{label}={fmt_actual}")
+            else:       reasons_fail.append(f"{label}={fmt_actual}")
+
+        p = lambda v,t: float(v) if v not in (None,"") else None
+        chk("Price",    (lambda a: a<=float(item["price"])) if item.get("price") else None, price, f"${price:.2f}")
+        chk("P/E",      (lambda a: a is not None and a<=float(item["pe"])) if item.get("pe") else None, pe, f"{round(pe,1) if pe else 'N/A'}×")
+        chk("P/B",      (lambda a: a is not None and a<=float(item["pb"])) if item.get("pb") else None, pb, f"{round(pb,2) if pb else 'N/A'}×")
+        chk("Vol",      (lambda a: a<=float(item["vol"])) if item.get("vol") else None, vol, f"{vol}%")
+        chk("DD",       (lambda a: a>=float(item["dd"])) if item.get("dd") else None, drawdown, f"{drawdown}%")
+        chk("RSI",      (lambda a: a is not None and a<=float(item["rsi"])) if item.get("rsi") else None, rsi_v, f"{round(rsi_v,1) if rsi_v else 'N/A'}")
+        chk("IR",       (lambda a: a is not None and a>=float(item["ir"])) if item.get("ir") else None, ir_val, f"{ir_val}")
+
+        if not checks:
+            return False, "no conditions set"
+
+        matched = all(checks) if logic=="and" else any(checks)
+        reason  = ("ALL met: " if logic=="and" else "Match: ")+", ".join(reasons_pass)
+        if not matched:
+            reason = ("Not all met — " if logic=="and" else "None matched — ")+", ".join(reasons_fail[:3])
+        return matched, reason
+    except Exception as ex:
+        return False, str(ex)
+
+def run_monitor_check():
+    """Run all conditions, send alerts if matched."""
+    cfg   = load_monitor_config()
+    items = cfg.get("items", [])
+    results = []
+    alerts  = []
+    for item in items:
+        matched, reason = check_conditions(item)
+        results.append({"ticker":item.get("ticker",""), "matched":matched, "reason":reason})
+        if matched:
+            alerts.append({"ticker":item.get("ticker",""), "reason":reason, "note":item.get("note","")})
+
+    if alerts:
+        now_str  = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+        subject  = f"[Investment Mandate] {len(alerts)} Alert{'s' if len(alerts)>1 else ''} — {now_str}"
+        rows     = "".join(f"<tr><td style='padding:6px 12px;font-weight:600'>{a['ticker']}</td><td style='padding:6px 12px;color:#16A34A'>{a['reason']}</td><td style='padding:6px 12px;color:#64748B'>{a['note']}</td></tr>" for a in alerts)
+        body     = f"""<html><body style='font-family:Inter,sans-serif;color:#0F172A'>
+<h2 style='color:#2563EB'>Investment Mandate Alert</h2>
+<p>The following conditions were met at {now_str}:</p>
+<table border='0' cellspacing='0' style='border-collapse:collapse;width:100%;background:#F8FAFC;border-radius:8px'>
+<thead><tr style='background:#E2E8F0'><th style='padding:8px 12px;text-align:left'>Ticker</th><th style='padding:8px 12px;text-align:left'>Condition</th><th style='padding:8px 12px;text-align:left'>Note</th></tr></thead>
+<tbody>{rows}</tbody></table>
+<p style='color:#64748B;font-size:12px;margin-top:16px'>Checked daily at 7:00 AM AEST · Investment Mandate App</p>
+</body></html>"""
+        # Email
+        if cfg.get("email") and cfg.get("smtpHost"):
+            send_email(cfg, subject, body)
+        # Google Calendar
+        if cfg.get("calKey") and cfg.get("calId"):
+            import datetime as _dt
+            aest_7am = (_dt.datetime.utcnow().replace(hour=21,minute=0,second=0,microsecond=0)
+                        + _dt.timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S")
+            desc = "\n".join(f"{a['ticker']}: {a['reason']}" for a in alerts)
+            add_google_calendar_event(cfg, subject, desc, aest_7am)
+
+    # Log result
+    log_entry = {"ts":datetime.utcnow().isoformat()[:19], "results":results, "alertCount":len(alerts)}
+    log_file = "monitor_log.json"
+    logs = []
+    if os.path.exists(log_file):
+        try:
+            with open(log_file) as f: logs=json.load(f)
+        except: pass
+    logs.insert(0, log_entry)
+    logs = logs[:200]  # keep last 200 runs
+    with open(log_file,"w") as f: json.dump(logs,f)
+    return results
+
+# ── Scheduler: fire at 7AM AEST (= 21:00 UTC prev day) daily ──
+def _scheduler_loop():
+    import datetime as _dt
+    while True:
+        try:
+            now_utc = _dt.datetime.utcnow()
+            # 7AM AEST = UTC+10 = 21:00 UTC previous day
+            target  = now_utc.replace(hour=21, minute=0, second=0, microsecond=0)
+            if now_utc >= target:
+                target += _dt.timedelta(days=1)
+            wait_sec = (target - now_utc).total_seconds()
+            _time.sleep(wait_sec)
+            cfg = load_monitor_config()
+            if cfg.get("items"):
+                run_monitor_check()
+        except Exception:
+            _time.sleep(3600)  # on error, retry in 1h
+
+_sched_thread = threading.Thread(target=_scheduler_loop, daemon=True)
+_sched_thread.start()
+
+# ── Monitor routes ──────────────────────────────────────────────────
+@app.route("/monitor/config", methods=["GET"])
+def get_monitor_config():
+    cfg = load_monitor_config()
+    # Redact password in response
+    safe = {**cfg, "smtpPass":"" if cfg.get("smtpPass") else ""}
+    return jsonify(safe)
+
+@app.route("/monitor/config", methods=["POST"])
+def post_monitor_config():
+    try:
+        d = request.json
+        existing = load_monitor_config()
+        # Preserve password if not re-submitted
+        if not d.get("smtpPass") and existing.get("smtpPass"):
+            d["smtpPass"] = existing["smtpPass"]
+        save_monitor_config_file(d)
+        return jsonify({"ok": True})
+    except Exception as ex:
+        return jsonify({"error": str(ex)}), 500
+
+@app.route("/monitor/run", methods=["POST"])
+def run_monitor_now():
+    try:
+        results = run_monitor_check()
+        return jsonify({"results": results})
+    except Exception as ex:
+        return jsonify({"error": str(ex)}), 500
+
+@app.route("/monitor/log", methods=["GET"])
+def get_monitor_log():
+    log_file = "monitor_log.json"
+    if os.path.exists(log_file):
+        with open(log_file) as f:
+            return jsonify(json.load(f))
+    return jsonify([])
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
