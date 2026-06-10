@@ -2766,12 +2766,15 @@ def cb_login(email, password):
         r = s.post(f"{CB_BASE}/account/LogOnAjax",
                    data={"email":email,"strng":password,"rememberMe":"true"},
                    timeout=20, verify=True)
-    except cb_requests.exceptions.ConnectionError:
-        raise ValueError("Cannot reach Calcbench — check Railway outbound network or try again.")
+    except cb_requests.exceptions.ConnectionError as ce:
+        raise ValueError(f"Cannot reach Calcbench — network error: {str(ce)[:120]}")
     except cb_requests.exceptions.Timeout:
         raise ValueError("Calcbench request timed out — try again.")
-    if r.text.strip().lower() != "true":
-        raise ValueError(f"Calcbench login failed — check your email and password. (Response: {r.text[:80]})")
+    resp = r.text.strip().lower()
+    if resp not in ("true", '"true"'):
+        if not resp:
+            raise ValueError("Calcbench returned empty response — login endpoint may have moved. Check calcbench.com is accessible.")
+        raise ValueError(f"Calcbench login failed — check email/password. Server said: {r.text[:120]}")
     return s
 
 def cb_get_filings(session, ticker, n=4):
@@ -2779,6 +2782,7 @@ def cb_get_filings(session, ticker, n=4):
     url = f"{CB_BASE}/api/filings?tickers={ticker}&filing_types=10-K,10-Q&number_of_filings={n*2}"
     try:
         r = session.get(url, timeout=15)
+        if not r.text.strip(): return []
         filings = r.json()
         # Filter to 10-K and 10-Q, sort by date desc
         filings = [f for f in filings if f.get("formType","") in ("10-K","10-Q")]
@@ -2816,6 +2820,8 @@ def cb_get_statement_rows(session, ticker, metrics, fiscal_year, fiscal_period):
             "metrics": metric_names,
         }
         r = session.post(f"{CB_BASE}/api/NormalizedValues", json=payload, timeout=20)
+        if not r.text.strip():
+            return [{"label":"No data returned","value":None,"isTotal":False,"indent":0,"section":"","unit":""}]
         raw = r.json()
         # Index by metric name
         val_map = {}
@@ -2843,6 +2849,7 @@ def cb_get_commentary(session, ticker, accession_no):
         try:
             url = f"{CB_BASE}/api/disclosures?ticker={ticker}&disclosure_type=AS_REPORTED&accession_number={accession_no}&disclosure_field={tag}"
             r = session.get(url, timeout=20)
+            if not r.text.strip(): continue
             data = r.json()
             if data and isinstance(data, list) and data[0].get("disclosure_text"):
                 text = data[0]["disclosure_text"]
@@ -2879,9 +2886,12 @@ def financials_test():
     d = request.json
     try:
         session = cb_login(d.get("email",""), d.get("password",""))
-        # Quick check — get user profile
-        r = session.get(f"{CB_BASE}/api/me", timeout=10)
-        return jsonify({"ok": True})
+        # Verify login by hitting a lightweight authenticated endpoint
+        r = session.get(f"{CB_BASE}/api/companies?tickers=AAPL", timeout=10)
+        if r.status_code == 200:
+            return jsonify({"ok": True})
+        else:
+            return jsonify({"error": f"Authenticated but API returned {r.status_code}. You may need API access — contact us@calcbench.com"}), 403
     except ValueError as ve:
         return jsonify({"error": str(ve)}), 401
     except Exception as ex:
@@ -2908,7 +2918,8 @@ def financials_fetch():
         # Get company name
         try:
             co_url  = f"{CB_BASE}/api/companies?tickers={ticker}"
-            co_data = session.get(co_url, timeout=10).json()
+            co_r2 = session.get(co_url, timeout=10)
+            co_data = co_r2.json() if co_r2.text.strip() else []
             company_name = co_data[0].get("name", ticker) if co_data else ticker
         except:
             company_name = ticker
