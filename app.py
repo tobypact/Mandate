@@ -378,7 +378,7 @@ tr:hover td{background:var(--sur2)}
 .shb{display:flex;flex-direction:column;align-items:center;gap:.3rem;padding:.7rem .4rem;background:var(--sur2);border:1px solid var(--bdr);border-radius:7px;cursor:pointer;font-size:.7rem;color:var(--txt);font-weight:500}
 .shb:hover{background:var(--acl);border-color:var(--acc);color:var(--acc)}
 .stx{background:var(--sur2);border:1px solid var(--bdr);border-radius:6px;padding:.6rem;font-size:.75rem;color:var(--txt);line-height:1.6;max-height:100px;overflow-y:auto;margin-bottom:.6rem;white-space:pre-wrap}
-.hr{display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:.35rem;margin-bottom:.45rem;align-items:center}
+.hr{display:grid;grid-template-columns:1fr 1fr 1fr 1fr auto;gap:.35rem;margin-bottom:.45rem;align-items:center}
 .hr input{font-size:.78rem;padding:.4rem .5rem}
 .rmb{background:none;border:1px solid var(--bdr);border-radius:5px;color:var(--mut);cursor:pointer;padding:.35rem .45rem;font-size:.8rem}
 .rmb:hover{background:var(--rdl);color:var(--red);border-color:#FECACA}
@@ -612,6 +612,10 @@ tr:hover td{background:var(--sur2)}
       </div>
     </div>
     <div style="font-size:.68rem;color:var(--mut);margin-bottom:.65rem" id="pf-lb-hint">≈ 365 calendar days</div>
+    <div class="sl">Watchlist <span style="font-weight:400;font-size:.65rem;text-transform:none;letter-spacing:0;color:var(--mut)">— securities to appraise</span></div>
+    <div style="font-size:.68rem;color:var(--mut);margin-bottom:.5rem">Add tickers to compute Appraisal Ratio vs your portfolio benchmark</div>
+    <div id="wl-list"></div>
+    <button class="btn bg" style="width:100%;margin-bottom:.75rem;font-size:.76rem" onclick="addWatchItem()">+ Add Security</button>
     <button class="btn bp" id="pf-run" onclick="runPortfolio()">▶ Analyse Portfolio</button>
     <div class="er" id="pf-err"></div>
   </div></div></aside>
@@ -622,7 +626,7 @@ tr:hover td{background:var(--sur2)}
       <div class="sg" id="pf-stats"></div>
       <div class="tc" style="margin-bottom:1rem">
         <div class="th">Holdings</div>
-        <div style="overflow-x:auto"><table><thead><tr><th>Ticker</th><th>Shares</th><th>Avg Cost</th><th>Price</th><th>Value</th><th>P&L</th><th>Return</th><th>Weight</th><th>Vol</th></tr></thead><tbody id="pf-tbl"></tbody></table></div>
+        <div style="overflow-x:auto"><table><thead><tr><th>Ticker</th><th>Shares</th><th>Avg Cost</th><th>Purchased</th><th>Held (days)</th><th>Price</th><th>Value</th><th>P&L</th><th>Return</th><th>Weight</th><th>Vol</th></tr></thead><tbody id="pf-tbl"></tbody></table></div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem">
         <div class="cc" style="margin:0"><div class="ct">Asset Allocation</div><canvas id="pf-alloc" style="max-height:200px"></canvas></div>
@@ -630,6 +634,10 @@ tr:hover td{background:var(--sur2)}
       </div>
       <div class="cc" id="pf-bm-wrap" style="display:none"><div class="ct">Portfolio vs Benchmark</div><canvas id="pf-bm-chart"></canvas></div>
       <div class="card" style="margin-bottom:1rem"><div class="ch">Correlation Matrix</div><div class="cb" style="overflow-x:auto"><div id="pf-corr"></div></div></div>
+      <div class="card" id="pf-ir-card" style="display:none;margin-bottom:1rem">
+        <div class="ch">Information Ratio &amp; Appraisal Ratio</div>
+        <div class="cb" id="pf-ir-body"></div>
+      </div>
       <div class="card" id="pf-tgt-card" style="display:none;margin-bottom:1rem"><div class="ch">Return Target</div><div class="cb" id="pf-tgt-body"></div></div>
       <div class="card"><div class="ch">Notes &amp; Thoughts</div><div class="cb">
         <div class="fd"><label>Portfolio Notes</label><textarea id="pf-notes" placeholder="Observations…"></textarea></div>
@@ -923,15 +931,29 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.getElementById('pf-lb-val').addEventListener('input',lbHint);
   document.getElementById('pf-lb-unit').addEventListener('change',lbHint);
   addHolding();addHolding();addHolding();
+  // watchlist
+  let wlCount=0;
+  window.addWatchItem=function(t=''){
+    wlCount++;const id=wlCount;
+    const div=document.createElement('div');div.className='r2';div.id='wl-'+id;div.style.marginBottom='.35rem';
+    div.innerHTML=`<input placeholder="Ticker e.g. AAPL" value="${t}" class="wl-tk" style="text-transform:uppercase;font-size:.76rem"/><button class="rmb" onclick="document.getElementById('wl-${id}').remove()" style="width:auto">✕</button>`;
+    document.getElementById('wl-list').appendChild(div);
+  };
+  addWatchItem();addWatchItem();
 });
-function addHolding(t='',s='',c=''){
+function addHolding(t='',s='',c='',d=''){
   pfCount++;const id=pfCount;
   const div=document.createElement('div');div.className='hr';div.id='hr-'+id;
-  div.innerHTML=`<input placeholder="Ticker" value="${t}" class="pf-tk" style="text-transform:uppercase"/><input type="number" placeholder="Shares" value="${s}" class="pf-sh"/><input type="number" placeholder="Avg Cost $" value="${c}" class="pf-co"/><button class="rmb" onclick="document.getElementById('hr-${id}').remove()">✕</button>`;
+  div.innerHTML=`<input placeholder="Ticker" value="${t}" class="pf-tk" style="text-transform:uppercase;font-size:.76rem"/><input type="number" placeholder="Shares" value="${s}" class="pf-sh" style="font-size:.76rem"/><input type="number" placeholder="Avg Cost $" value="${c}" class="pf-co" style="font-size:.76rem"/><input type="date" value="${d}" class="pf-pd" title="Purchase date" style="font-size:.72rem;padding:.35rem .3rem"/><button class="rmb" onclick="document.getElementById('hr-${id}').remove()">✕</button>`;
   document.getElementById('pf-list').appendChild(div);
 }
 function getHoldings(){
-  return [...document.querySelectorAll('.hr')].map(r=>({ticker:r.querySelector('.pf-tk').value.trim().toUpperCase(),shares:parseFloat(r.querySelector('.pf-sh').value),avgCost:parseFloat(r.querySelector('.pf-co').value)})).filter(h=>h.ticker&&h.shares&&h.avgCost);
+  return [...document.querySelectorAll('.hr')].map(r=>({
+    ticker:r.querySelector('.pf-tk').value.trim().toUpperCase(),
+    shares:parseFloat(r.querySelector('.pf-sh').value),
+    avgCost:parseFloat(r.querySelector('.pf-co').value),
+    purchaseDate:r.querySelector('.pf-pd').value||null
+  })).filter(h=>h.ticker&&h.shares&&h.avgCost);
 }
 async function runPortfolio(){
   const btn=document.getElementById('pf-run');
@@ -940,7 +962,8 @@ async function runPortfolio(){
   showErr('pf-err',''); setUI('pf','sw'); btn.disabled=true; btn.textContent='Running…';
   const lbV=sv('pf-lb-val'),lbU=document.getElementById('pf-lb-unit').value;
   try{
-    const r=await fetch('/portfolio',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({holdings,targetReturn:document.getElementById('pf-use-target').checked?gv('pf-target'):null,benchmark:document.getElementById('pf-use-bm').checked?sv('pf-bm'):'',lookbackDays:lbDays(),lookbackLabel:lbV+' '+lbU})});
+    const watchlist=[...document.querySelectorAll('.wl-tk')].map(e=>e.value.trim().toUpperCase()).filter(Boolean);
+    const r=await fetch('/portfolio',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({holdings,targetReturn:document.getElementById('pf-use-target').checked?gv('pf-target'):null,benchmark:document.getElementById('pf-use-bm').checked?sv('pf-bm'):'',lookbackDays:lbDays(),lookbackLabel:lbV+' '+lbU,watchlist})});
     const data=await r.json();
     if(data.error)throw new Error(data.error);
     curPf=data; renderPf(data); setUI('pf','res');
@@ -959,7 +982,14 @@ function renderPf(d){
     gap!=null?{l:'Target Gap',v:(gap>=0?'+':'')+gap+'%',s:gap>=0?'✅ on track':'⚠ below target',c:gap>=0?'pos':'neg'}:{l:'Positions',v:d.positions.length,s:'holdings',c:'neu'},
     {l:'Holdings',v:d.positions.length,s:'positions',c:'neu'},
   ].map(c=>`<div class="sc"><div class="sl2">${c.l}</div><div class="sv ${c.c}">${c.v}</div><div class="ss">${c.s}</div></div>`).join('');
-  document.getElementById('pf-tbl').innerHTML=d.positions.map(p=>`<tr><td><strong>${p.ticker}</strong></td><td>${p.shares}</td><td>$${p.avgCost}</td><td>$${p.currentPrice}</td><td>$${p.marketValue.toLocaleString()}</td><td class="${p.pnl>=0?'pos':'neg'}">${p.pnl>=0?'+':'-'}$${Math.abs(p.pnl).toLocaleString()} (${p.pnlPct}%)</td><td class="${p.return1y>=0?'pos':'neg'}">${fmt(p.return1y,'%')}</td><td>${p.weight}%</td><td class="${p.volatility>30?'neg':''}">${p.volatility}%</td></tr>`).join('');
+  document.getElementById('pf-tbl').innerHTML=d.positions.map(p=>`<tr>
+    <td><strong>${p.ticker}</strong></td><td>${p.shares}</td><td>$${p.avgCost}</td>
+    <td style="color:var(--mut);font-size:.74rem">${p.purchaseDate||'—'}</td>
+    <td style="color:var(--mut)">${p.holdingDays!=null?p.holdingDays+' d':'—'}</td>
+    <td>$${p.currentPrice}</td><td>$${p.marketValue.toLocaleString()}</td>
+    <td class="${p.pnl>=0?'pos':'neg'}">${p.pnl>=0?'+':'-'}$${Math.abs(p.pnl).toLocaleString()} (${p.pnlPct}%)</td>
+    <td class="${p.returnSincePurchase!=null?p.returnSincePurchase>=0?'pos':'neg':p.return1y>=0?'pos':'neg'}">${p.returnSincePurchase!=null?fmt(p.returnSincePurchase,'%'):fmt(p.return1y,'%')}</td>
+    <td>${p.weight}%</td><td class="${p.volatility>30?'neg':''}">${p.volatility}%</td></tr>`).join('');
   const COLS=['#2563EB','#7C3AED','#059669','#D97706','#DC2626','#0891B2','#BE185D','#65A30D','#9333EA','#EA580C'];
   if(pfAllocChart)pfAllocChart.destroy();
   pfAllocChart=new Chart(document.getElementById('pf-alloc'),{type:'doughnut',data:{labels:d.positions.map(p=>p.ticker),datasets:[{data:d.positions.map(p=>p.weight),backgroundColor:COLS.slice(0,d.positions.length),borderWidth:2,borderColor:'#fff'}]},options:{responsive:true,cutout:'60%',plugins:{legend:{position:'right',labels:{color:'#64748B',font:{family:'Inter',size:11},padding:8}}}}});
@@ -975,6 +1005,29 @@ function renderPf(d){
   let ch=`<table class="ctb"><thead><tr><th></th>${tickers.map(t=>`<th>${t}</th>`).join('')}</tr></thead><tbody>`;
   matrix.forEach((row,i)=>{ch+=`<tr><th style="text-align:left;background:var(--sur2)">${tickers[i]}</th>`;row.forEach((v,j)=>{const cls=i===j?'ch':v>=.7?'ch':v>=.4?'cm':v>=0?'cl':'cn';ch+=`<td class="${cls}">${v}</td>`;});ch+='</tr>';});
   document.getElementById('pf-corr').innerHTML=ch+'</tbody></table>';
+  // ── Information Ratio & Appraisal Ratio ──
+  const irCard=document.getElementById('pf-ir-card');
+  if(d.informationRatio!=null||d.appraisalRatios){
+    irCard.style.display='block';
+    let irHtml=`<div class="sg" style="grid-template-columns:repeat(3,1fr);margin-bottom:1rem">
+      <div class="sc"><div class="sl2">Information Ratio</div><div class="sv ${d.informationRatio>=0?'pos':'neg'}">${d.informationRatio!=null?d.informationRatio:'—'}</div><div class="ss">Active return ÷ tracking error</div></div>
+      <div class="sc"><div class="sl2">Active Return</div><div class="sv ${d.activeReturn>=0?'pos':'neg'}">${d.activeReturn!=null?fmt(d.activeReturn,'%'):'—'}</div><div class="ss">vs ${d.benchmarkUsed||'benchmark'}</div></div>
+      <div class="sc"><div class="sl2">Tracking Error</div><div class="sv neu">${d.pfTrackingError!=null?d.pfTrackingError+'%':'—'}</div><div class="ss">annualised std of active returns</div></div>
+    </div>`;
+    if(d.appraisalRatios&&d.appraisalRatios.length){
+      irHtml+=`<div style="font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--mut);margin-bottom:.5rem">Appraisal Ratio — Watchlist Securities</div>
+      <div style="font-size:.68rem;color:var(--mut);margin-bottom:.65rem">Alpha ÷ residual risk (σ of unsystematic return). Higher = better risk-adjusted active contribution.</div>
+      <table><thead><tr><th>Security</th><th>Alpha (%)</th><th>Beta</th><th>Residual Risk (%)</th><th>Appraisal Ratio</th><th>Interpretation</th></tr></thead><tbody>`;
+      d.appraisalRatios.forEach(ar=>{
+        const cls=ar.appraisalRatio>0.5?'pos':ar.appraisalRatio<0?'neg':'neu';
+        const interp=ar.appraisalRatio>1?'Strong add':ar.appraisalRatio>0.5?'Moderate add':ar.appraisalRatio>0?'Weak add':'Detracts';
+        irHtml+=`<tr><td><strong>${ar.ticker}</strong></td><td class="${ar.alpha>=0?'pos':'neg'}">${ar.alpha>=0?'+':''}${ar.alpha}%</td><td>${ar.beta}</td><td>${ar.residualRisk}%</td><td class="${cls}">${ar.appraisalRatio}</td><td style="color:var(--mut);font-size:.74rem">${interp}</td></tr>`;
+      });
+      irHtml+='</tbody></table>';
+    }
+    document.getElementById('pf-ir-body').innerHTML=irHtml;
+  } else {irCard.style.display='none';}
+
   if(gap!=null&&d.targetGap!==null){
     document.getElementById('pf-tgt-card').style.display='block';
     const pct=Math.min(Math.max(d.portReturn/parseFloat(document.getElementById('pf-target').value||1)*100,0),100);
@@ -1106,30 +1159,55 @@ def del_record(rid):
 def portfolio():
     d = request.json
     try:
-        holdings = d.get("holdings",[])
+        holdings  = d.get("holdings",[])
+        watchlist = [t.upper().strip() for t in d.get("watchlist",[]) if t.strip()]
         if not holdings: return jsonify({"error":"No holdings"}), 400
-        tickers = [h["ticker"].upper().strip() for h in holdings]
-        shares  = {h["ticker"].upper().strip():float(h["shares"]) for h in holdings}
-        costs   = {h["ticker"].upper().strip():float(h["avgCost"]) for h in holdings}
-        days    = int(d.get("lookbackDays",365))
+        tickers   = [h["ticker"].upper().strip() for h in holdings]
+        shares    = {h["ticker"].upper().strip():float(h["shares"]) for h in holdings}
+        costs     = {h["ticker"].upper().strip():float(h["avgCost"]) for h in holdings}
+        pur_dates = {h["ticker"].upper().strip():h.get("purchaseDate") for h in holdings}
+        days      = int(d.get("lookbackDays",365))
+        benchmark = d.get("benchmark","").upper().strip()
+        today     = pd.Timestamp.today()
+
         raw = yf.download(tickers, period=f"{days}d", progress=False, auto_adjust=True)
         if raw.empty: return jsonify({"error":"No data"}), 400
         close = raw["Close"] if len(tickers)>1 else raw["Close"].to_frame(tickers[0])
         close = close[tickers].dropna()
+
         latest   = {t:float(close[t].iloc[-1]) for t in tickers}
         mkt      = {t:latest[t]*shares[t] for t in tickers}
         cost_val = {t:costs[t]*shares[t] for t in tickers}
         tot_mkt  = sum(mkt.values()); tot_cost = sum(cost_val.values())
         tot_pnl  = tot_mkt - tot_cost
         weights  = {t:round(mkt[t]/tot_mkt*100,2) for t in tickers}
+
         positions = []
         for t in tickers:
             pnl = mkt[t]-cost_val[t]
+            pd_str = pur_dates.get(t)
+            holding_days = None
+            return_since_purchase = None
+            if pd_str:
+                try:
+                    pur_dt = pd.Timestamp(pd_str)
+                    holding_days = (today - pur_dt).days
+                    # Fetch price at purchase date for accurate return
+                    hist = yf.download(t, start=pd_str, end=str(today.date()),
+                                       progress=False, auto_adjust=True)
+                    if not hist.empty:
+                        pur_price = float(hist["Close"].squeeze().iloc[0])
+                        return_since_purchase = round((latest[t]-pur_price)/pur_price*100,2)
+                except: pass
             positions.append({"ticker":t,"shares":shares[t],"avgCost":costs[t],
+                "purchaseDate":pd_str,"holdingDays":holding_days,
+                "returnSincePurchase":return_since_purchase,
                 "currentPrice":round(latest[t],2),"marketValue":round(mkt[t],2),
                 "pnl":round(pnl,2),"pnlPct":round(pnl/cost_val[t]*100,2) if cost_val[t] else 0,
-                "weight":weights[t],"return1y":round((float(close[t].iloc[-1])/float(close[t].iloc[0])-1)*100,1),
+                "weight":weights[t],
+                "return1y":round((float(close[t].iloc[-1])/float(close[t].iloc[0])-1)*100,1),
                 "volatility":round(float(close[t].pct_change().dropna().std())*np.sqrt(252)*100,2)})
+
         rets_df = close.pct_change().dropna()
         corr    = rets_df.corr().round(3)
         wts     = pd.Series({t:weights[t]/100 for t in tickers})
@@ -1138,15 +1216,68 @@ def portfolio():
         pret    = round(float(pr.mean())*252*100,2)
         sharpe  = round(pret/pv,2) if pv else 0
         tgap    = round(float(d["targetReturn"])-pret,2) if d.get("targetReturn") else None
+
+        # ── Information Ratio vs benchmark ──
+        ir = None; active_ret = None; pf_te = None; bm_used = None
+        if benchmark:
+            try:
+                bm_df = yf.download(benchmark, period=f"{days}d", progress=False, auto_adjust=True)
+                if not bm_df.empty:
+                    bm_rets = bm_df["Close"].squeeze().pct_change().dropna()
+                    pr_aligned = pr.reindex(bm_rets.index).dropna()
+                    bm_aligned = bm_rets.reindex(pr_aligned.index).dropna()
+                    mn = min(len(pr_aligned), len(bm_aligned))
+                    if mn > 20:
+                        active = pr_aligned.iloc[-mn:].values - bm_aligned.iloc[-mn:].values
+                        te = float(np.std(active)) * np.sqrt(252) * 100
+                        ar = float(np.mean(active)) * 252 * 100
+                        ir = round(ar / te, 3) if te > 0 else None
+                        active_ret = round(ar, 2)
+                        pf_te = round(te, 2)
+                        bm_used = benchmark
+            except: pass
+
+        # ── Appraisal Ratio for watchlist securities ──
+        appraisal_ratios = []
+        if watchlist and benchmark:
+            try:
+                bm_df2 = yf.download(benchmark, period=f"{days}d", progress=False, auto_adjust=True)
+                bm_r   = bm_df2["Close"].squeeze().pct_change().dropna() if not bm_df2.empty else None
+                for wt in watchlist:
+                    try:
+                        wt_df = yf.download(wt, period=f"{days}d", progress=False, auto_adjust=True)
+                        if wt_df.empty or bm_r is None: continue
+                        wt_r  = wt_df["Close"].squeeze().pct_change().dropna()
+                        mn2   = min(len(wt_r), len(bm_r))
+                        wr    = wt_r.iloc[-mn2:].values
+                        br    = bm_r.iloc[-mn2:].values
+                        cov2  = np.cov(wr, br)
+                        beta  = round(cov2[0,1]/cov2[1,1], 3) if cov2[1,1] else None
+                        if beta is None: continue
+                        alpha_daily = float(np.mean(wr)) - beta * float(np.mean(br))
+                        alpha_ann   = round(alpha_daily * 252 * 100, 2)
+                        # Residual (unsystematic) risk
+                        residuals   = wr - (alpha_daily + beta * br)
+                        resid_risk  = round(float(np.std(residuals)) * np.sqrt(252) * 100, 2)
+                        appraisal   = round(alpha_ann / resid_risk, 3) if resid_risk > 0 else None
+                        appraisal_ratios.append({"ticker":wt,"alpha":alpha_ann,"beta":beta,
+                            "residualRisk":resid_risk,"appraisalRatio":appraisal})
+                    except: continue
+            except: pass
+
         sectors = {}
         for t in tickers:
             try: s = yf.Ticker(t).info.get("sector","Unknown") or "Unknown"
             except: s = "Unknown"
             sectors[s] = round(sectors.get(s,0)+weights[t],2)
+
         return jsonify({"positions":positions,"totalMarketValue":round(tot_mkt,2),
             "totalCost":round(tot_cost,2),"totalPnl":round(tot_pnl,2),
             "totalPnlPct":round(tot_pnl/tot_cost*100,2) if tot_cost else 0,
             "portReturn":pret,"portVol":pv,"sharpe":sharpe,"targetGap":tgap,
+            "informationRatio":ir,"activeReturn":active_ret,
+            "pfTrackingError":pf_te,"benchmarkUsed":bm_used,
+            "appraisalRatios":appraisal_ratios,
             "corr":{"tickers":tickers,"matrix":corr.values.tolist()},
             "sectorWeights":sectors,"lookbackLabel":d.get("lookbackLabel","")})
     except Exception as ex:
@@ -1155,4 +1286,3 @@ def portfolio():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
-
