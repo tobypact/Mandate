@@ -340,106 +340,6 @@ HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>Investment Mandate & Capital Deployment</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js">
-// ══════════════════════════════════════════════════════
-// CHART VIEW ENGINE — resample + range filter for all line charts
-// ══════════════════════════════════════════════════════
-const cvState = {};  // { chartKey: { view:'D'|'M'|'Y'|'R', from, to } }
-
-// Registry: chartKey → { chartRef getter, rawData getter, rebuildFn }
-const cvRegistry = {};
-
-function cvRegister(key, getChart, getRaw, rebuild){
-  cvRegistry[key] = { getChart, getRaw, rebuild };
-  cvState[key] = { view:'D', from:null, to:null };
-}
-
-// Resample daily data to monthly or yearly last-value
-function resample(labels, datasets, freq){
-  if(freq==='D') return { labels, datasets };
-  const buckets = {};
-  labels.forEach((d,i)=>{
-    const key = freq==='M' ? d.slice(0,7) : d.slice(0,4);
-    buckets[key] = { label:d, i };  // last point in bucket wins
-  });
-  const keys  = Object.keys(buckets).sort();
-  const newLabels = keys.map(k=>buckets[k].label);
-  const newDatasets = datasets.map(ds=>({
-    ...ds,
-    data: keys.map(k=>{
-      const v = ds.data[buckets[k].i];
-      return v;
-    })
-  }));
-  return { labels:newLabels, datasets:newDatasets };
-}
-
-// Filter by date range
-function filterRange(labels, datasets, from, to){
-  if(!from && !to) return { labels, datasets };
-  const idxs = labels.reduce((acc,d,i)=>{
-    if((!from||d>=from) && (!to||d<=to)) acc.push(i);
-    return acc;
-  }, []);
-  return {
-    labels: idxs.map(i=>labels[i]),
-    datasets: datasets.map(ds=>({ ...ds, data:idxs.map(i=>ds.data[i]) }))
-  };
-}
-
-function applyView(key){
-  const reg = cvRegistry[key];
-  if(!reg) return;
-  const raw  = reg.getRaw();
-  if(!raw) return;
-  const st   = cvState[key];
-  let { labels, datasets } = raw;
-  // Apply date range filter first
-  if(st.view==='R')
-    ({ labels, datasets } = filterRange(labels, datasets, st.from, st.to));
-  else
-    ({ labels, datasets } = resample(labels, datasets, st.view));
-  // Update existing chart (faster than destroy/rebuild)
-  const chart = reg.getChart();
-  if(!chart) { reg.rebuild(labels, datasets); return; }
-  chart.data.labels   = labels;
-  chart.data.datasets.forEach((ds,i)=>{ if(datasets[i]) ds.data = datasets[i].data; });
-  chart.update('none');
-}
-
-function setCvView(key, btn, freq){
-  // Update active button style
-  const wrap = btn.closest('.cv-toolbar');
-  if(wrap) wrap.querySelectorAll('.cv-btn').forEach(b=>b.classList.remove('cv-active'));
-  btn.classList.add('cv-active');
-  // Hide range picker if not range mode
-  const rangeWrap = document.getElementById(key+'-range-wrap');
-  if(rangeWrap) rangeWrap.classList.remove('open');
-  cvState[key] = { ...cvState[key], view:freq };
-  applyView(key);
-}
-
-function toggleCvRange(key){
-  const rangeWrap = document.getElementById(key+'-range-wrap');
-  if(!rangeWrap) return;
-  rangeWrap.classList.toggle('open');
-}
-
-function applyCvRange(key){
-  const from = document.getElementById(key+'-range-from')?.value || null;
-  const to   = document.getElementById(key+'-range-to')?.value   || null;
-  cvState[key] = { view:'R', from, to };
-  // Mark range button active
-  const rangeWrap = document.getElementById(key+'-range-wrap');
-  if(rangeWrap){
-    const toolbar = rangeWrap.previousElementSibling;
-    if(toolbar) toolbar.querySelectorAll('.cv-btn').forEach(b=>b.classList.remove('cv-active'));
-    // mark the range btn
-    const btns = toolbar ? toolbar.querySelectorAll('.cv-btn') : [];
-    if(btns.length) btns[btns.length-1].classList.add('cv-active');
-  }
-  applyView(key);
-}
-
 </script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
 <style>
@@ -914,6 +814,107 @@ tr:hover td{background:var(--sur2)}
 </div>
 
 <script>
+// ══════════════════════════════════════════════════════
+// CHART VIEW ENGINE — resample + range filter for all line charts
+// ══════════════════════════════════════════════════════
+const cvState = {};  // { chartKey: { view:'D'|'M'|'Y'|'R', from, to } }
+
+// Registry: chartKey → { chartRef getter, rawData getter, rebuildFn }
+const cvRegistry = {};
+
+function cvRegister(key, getChart, getRaw, rebuild){
+  cvRegistry[key] = { getChart, getRaw, rebuild };
+  cvState[key] = { view:'D', from:null, to:null };
+}
+
+// Resample daily data to monthly or yearly last-value
+function resample(labels, datasets, freq){
+  if(freq==='D') return { labels, datasets };
+  const buckets = {};
+  labels.forEach((d,i)=>{
+    const key = freq==='M' ? d.slice(0,7) : d.slice(0,4);
+    buckets[key] = { label:d, i };  // last point in bucket wins
+  });
+  const keys  = Object.keys(buckets).sort();
+  const newLabels = keys.map(k=>buckets[k].label);
+  const newDatasets = datasets.map(ds=>({
+    ...ds,
+    data: keys.map(k=>{
+      const v = ds.data[buckets[k].i];
+      return v;
+    })
+  }));
+  return { labels:newLabels, datasets:newDatasets };
+}
+
+// Filter by date range
+function filterRange(labels, datasets, from, to){
+  if(!from && !to) return { labels, datasets };
+  const idxs = labels.reduce((acc,d,i)=>{
+    if((!from||d>=from) && (!to||d<=to)) acc.push(i);
+    return acc;
+  }, []);
+  return {
+    labels: idxs.map(i=>labels[i]),
+    datasets: datasets.map(ds=>({ ...ds, data:idxs.map(i=>ds.data[i]) }))
+  };
+}
+
+function applyView(key){
+  const reg = cvRegistry[key];
+  if(!reg) return;
+  const raw  = reg.getRaw();
+  if(!raw) return;
+  const st   = cvState[key];
+  let { labels, datasets } = raw;
+  // Apply date range filter first
+  if(st.view==='R')
+    ({ labels, datasets } = filterRange(labels, datasets, st.from, st.to));
+  else
+    ({ labels, datasets } = resample(labels, datasets, st.view));
+  // Update existing chart (faster than destroy/rebuild)
+  const chart = reg.getChart();
+  if(!chart) { reg.rebuild(labels, datasets); return; }
+  chart.data.labels   = labels;
+  chart.data.datasets.forEach((ds,i)=>{ if(datasets[i]) ds.data = datasets[i].data; });
+  chart.update('none');
+}
+
+function setCvView(key, btn, freq){
+  // Update active button style
+  const wrap = btn.closest('.cv-toolbar');
+  if(wrap) wrap.querySelectorAll('.cv-btn').forEach(b=>b.classList.remove('cv-active'));
+  btn.classList.add('cv-active');
+  // Hide range picker if not range mode
+  const rangeWrap = document.getElementById(key+'-range-wrap');
+  if(rangeWrap) rangeWrap.classList.remove('open');
+  cvState[key] = { ...cvState[key], view:freq };
+  applyView(key);
+}
+
+function toggleCvRange(key){
+  const rangeWrap = document.getElementById(key+'-range-wrap');
+  if(!rangeWrap) return;
+  rangeWrap.classList.toggle('open');
+}
+
+function applyCvRange(key){
+  const from = document.getElementById(key+'-range-from')?.value || null;
+  const to   = document.getElementById(key+'-range-to')?.value   || null;
+  cvState[key] = { view:'R', from, to };
+  // Mark range button active
+  const rangeWrap = document.getElementById(key+'-range-wrap');
+  if(rangeWrap){
+    const toolbar = rangeWrap.previousElementSibling;
+    if(toolbar) toolbar.querySelectorAll('.cv-btn').forEach(b=>b.classList.remove('cv-active'));
+    // mark the range btn
+    const btns = toolbar ? toolbar.querySelectorAll('.cv-btn') : [];
+    if(btns.length) btns[btns.length-1].classList.add('cv-active');
+  }
+  applyView(key);
+}
+
+
 // ── State
 let btChart=null,valChart=null,pairChart=null,ratioChart=null;
 let pfAllocChart=null,pfSecChart=null,pfBmChart=null;
