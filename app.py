@@ -1194,14 +1194,15 @@ function renderFinancials(data){
 }
 
 function renderFilingData(filing){
-  document.getElementById('cb-income-title').textContent  = `Income Statement — ${filing.period}`;
-  document.getElementById('cb-balance-title').textContent  = `Balance Sheet — ${filing.period}`;
-  document.getElementById('cb-cashflow-title').textContent = `Cash Flow Statement — ${filing.period}`;
-  document.getElementById('cb-filing-date').textContent    = `${filing.type} · ${filing.period} · filed ${filing.filedOn}`;
-
-  renderFinTable('cb-income-body',  filing.income);
-  renderFinTable('cb-balance-body', filing.balance);
-  renderFinTable('cb-cashflow-body',filing.cashflow);
+  const cols = filing.income?.columns || filing.balance?.columns || [];
+  const colSub = cols.length ? ` — ${cols.slice(0,3).join(' · ')}` : (filing.period ? ` — ${filing.period}` : '');
+  document.getElementById('cb-income-title').textContent  = `Income Statement${colSub}`;
+  document.getElementById('cb-balance-title').textContent  = `Balance Sheet${colSub}`;
+  document.getElementById('cb-cashflow-title').textContent = `Cash Flow Statement${colSub}`;
+  document.getElementById('cb-filing-date').textContent    = `${filing.type} · ${filing.period}`;
+  renderFinTable('cb-income-body',   filing.income);
+  renderFinTable('cb-balance-body',  filing.balance);
+  renderFinTable('cb-cashflow-body', filing.cashflow);
   renderCommentary('cb-commentary-body', filing.commentary);
 }
 
@@ -1218,30 +1219,48 @@ function fmtNum(v){
   return sign+'$'+abs.toLocaleString()+end;
 }
 
-function renderFinTable(elId, rows){
+function renderFinTable(elId, stmtData){
   const el = document.getElementById(elId);
-  if(!rows||!rows.length){ el.innerHTML='<div style="color:var(--mut);font-size:.8rem;padding:.5rem">No data available</div>'; return; }
-  // Group by section
-  let html = '<table style="width:100%;border-collapse:collapse;font-size:.8rem">';
-  let lastSection = null;
+  // stmtData can be {rows, columns} or legacy array
+  const rows = Array.isArray(stmtData) ? stmtData : (stmtData && stmtData.rows ? stmtData.rows : []);
+  const cols = Array.isArray(stmtData) ? [] : (stmtData && stmtData.columns ? stmtData.columns : []);
+  if(!rows||!rows.length){
+    el.innerHTML='<div style="color:var(--mut);font-size:.8rem;padding:.5rem">No data available for this statement.</div>';
+    return;
+  }
+  const numCols = cols.length || (rows[0]?.values?.length || 1);
+  let h = '<table style="width:100%;border-collapse:collapse;font-size:.79rem;min-width:600px">';
+  // Header row
+  if(cols.length){
+    h += '<thead><tr><th style="text-align:left;padding:.45rem .75rem;background:var(--sur2);font-size:.7rem;color:var(--mut);min-width:200px">Line Item</th>';
+    cols.forEach(c=>{ h+=`<th style="text-align:right;padding:.45rem .65rem;background:var(--sur2);font-size:.7rem;color:var(--mut);white-space:nowrap">${c}</th>`; });
+    h += '</tr></thead>';
+  }
+  h += '<tbody>';
   rows.forEach(row=>{
-    if(row.section && row.section !== lastSection){
-      html += `<tr><td colspan="3" style="padding:.55rem .75rem .25rem;font-size:.65rem;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--mut);background:var(--sur2);border-top:2px solid var(--bdr)">${row.section}</td></tr>`;
-      lastSection = row.section;
+    if(row.isAbstract){
+      h+=`<tr><td colspan="${numCols+1}" style="padding:.55rem .75rem .2rem;font-size:.65rem;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--mut);background:var(--sur2);border-top:2px solid var(--bdr)">${row.label}</td></tr>`;
+      return;
     }
-    const isTotal = row.isTotal;
-    const style = isTotal ? 'font-weight:700;border-top:1px solid var(--bdr2)' : '';
-    const indent = row.indent>0 ? `padding-left:${0.75+row.indent*1}rem` : 'padding-left:.75rem';
-    const val = fmtNum(row.value);
-    const cls = parseFloat(row.value)<0 ? 'neg' : '';
-    html += `<tr>
-      <td style="${indent};padding-top:.42rem;padding-bottom:.42rem;${style};border-top:1px solid var(--bdr)">${row.label}</td>
-      <td style="text-align:right;padding:.42rem .75rem;${style};border-top:1px solid var(--bdr)" class="${cls}">${val}</td>
-      <td style="text-align:right;padding:.42rem .75rem;color:var(--mut);font-size:.72rem;border-top:1px solid var(--bdr)">${row.unit||''}</td>
-    </tr>`;
+    const isSub  = row.isSubtotal || row.isTotal;
+    const style  = isSub ? 'font-weight:700;border-top:1px solid var(--bdr2)' : '';
+    const indent = `padding-left:${0.5+(row.indent||0)*0.75}rem`;
+    const vals   = row.values || (row.value!=null ? [row.value] : []);
+    h += `<tr>`;
+    h += `<td style="${indent};padding-top:.4rem;padding-bottom:.4rem;${style};border-top:1px solid var(--bdr)">${row.label}</td>`;
+    if(vals.length){
+      vals.forEach(v=>{
+        const n = parseFloat(v);
+        const cls = !isNaN(n)&&n<0 ? 'neg' : '';
+        h += `<td style="text-align:right;padding:.4rem .65rem;${style};border-top:1px solid var(--bdr)" class="${cls}">${fmtNum(v)}</td>`;
+      });
+    } else {
+      for(let i=0;i<numCols;i++) h+=`<td style="text-align:right;padding:.4rem .65rem;border-top:1px solid var(--bdr);color:var(--mut)">—</td>`;
+    }
+    h += `</tr>`;
   });
-  html += '</table>';
-  el.innerHTML = html;
+  h += '</tbody></table>';
+  el.innerHTML = h;
 }
 
 function renderCommentary(elId, sections){
@@ -2700,61 +2719,19 @@ def get_monitor_log():
 
 
 # ══════════════════════════════════════════════════════════════════════
-# CALCBENCH — Financial Statements (official calcbench-api-client)
+# CALCBENCH — Financial Statements  (face-statement / detail page API)
+# Mirrors https://www.calcbench.com/detail/  i.e. company detail page
 # ══════════════════════════════════════════════════════════════════════
-import requests as _req
+import requests as _req, re as _re
 
 CB_BASE = "https://www.calcbench.com"
-
-CB_INCOME = [
-    ("Revenue","Revenue"),("Cost of Revenue","CostOfRevenue"),
-    ("Gross Profit","GrossProfit"),("R&D Expense","ResearchAndDevelopmentExpense"),
-    ("SG&A","SellingGeneralAdministrative"),("Operating Income","OperatingIncomeLoss"),
-    ("Interest Expense","InterestExpense"),
-    ("Pretax Income","IncomeLossFromContinuingOperationsBeforeIncomeTaxes"),
-    ("Income Tax","IncomeTaxExpenseBenefit"),("Net Income","NetIncomeLoss"),
-    ("EPS Basic","EarningsPerShareBasic"),("EPS Diluted","EarningsPerShareDiluted"),
-]
-CB_BALANCE = [
-    ("Cash & Equivalents","CashAndCashEquivalentsAtCarryingValue"),
-    ("Accounts Receivable","AccountsReceivableNetCurrent"),
-    ("Inventory","InventoryNet"),("Total Current Assets","AssetsCurrent"),
-    ("PP&E Net","PropertyPlantAndEquipmentNet"),("Goodwill","Goodwill"),
-    ("Total Assets","Assets"),("Accounts Payable","AccountsPayableCurrent"),
-    ("Total Current Liabilities","LiabilitiesCurrent"),
-    ("Long-term Debt","LongTermDebt"),("Total Liabilities","Liabilities"),
-    ("Total Equity","StockholdersEquity"),
-]
-CB_CASHFLOW = [
-    ("Operating Cash Flow","NetCashProvidedByUsedInOperatingActivities"),
-    ("Depreciation & Amortisation","DepreciationDepletionAndAmortization"),
-    ("CapEx","PaymentsToAcquirePropertyPlantAndEquipment"),
-    ("Investing Activities","NetCashProvidedByUsedInInvestingActivities"),
-    ("Financing Activities","NetCashProvidedByUsedInFinancingActivities"),
-    ("Dividends Paid","PaymentsOfDividends"),
-    ("Share Buybacks","PaymentsForRepurchaseOfCommonStock"),
-    ("Net Change in Cash","CashAndCashEquivalentsPeriodIncreaseDecrease"),
-]
-CB_COMMENTARY = [
-    ("Management Discussion & Analysis","ManagementsDiscussionAndAnalysisOfFinancialConditionAndResultsOfOperations"),
-    ("Business Overview","Business"),
-    ("Risk Factors","RiskFactors"),
-    ("Liquidity & Capital Resources","LiquidityAndCapitalResources"),
-    ("Critical Accounting Policies","CriticalAccountingPoliciesAndEstimates"),
-]
-
-TOTALS = {"GrossProfit","OperatingIncomeLoss","NetIncomeLoss","AssetsCurrent",
-          "Assets","LiabilitiesCurrent","Liabilities","StockholdersEquity",
-          "NetCashProvidedByUsedInOperatingActivities",
-          "NetCashProvidedByUsedInInvestingActivities",
-          "NetCashProvidedByUsedInFinancingActivities"}
 
 def cb_session(email, password):
     s = _req.Session()
     s.headers["User-Agent"] = "Mozilla/5.0 investment-app/1.0"
     try:
         r = s.post(f"{CB_BASE}/account/LogOnAjax",
-                   data={"email":email,"strng":password,"rememberMe":"true"},
+                   data={"email": email, "strng": password, "rememberMe": "true"},
                    timeout=20)
     except _req.exceptions.ConnectionError as e:
         raise ValueError(f"Cannot reach Calcbench: {e}")
@@ -2762,104 +2739,135 @@ def cb_session(email, password):
         raise ValueError("Calcbench timed out.")
     body = r.text.strip().strip('"').lower()
     if body != "true":
-        raise ValueError(f"Login failed (HTTP {r.status_code}): {r.text[:100]}")
+        raise ValueError(f"Login failed (HTTP {r.status_code}): {r.text[:120]}")
     return s
 
 def cb_json(r):
-    if not r.text.strip(): return None
+    t = r.text.strip()
+    if not t: return None
     try: return r.json()
     except Exception: return None
 
-def cb_standardized(session, ticker, metrics, fy, fp):
-    """Batch fetch standardized values. Returns {metric_lower: value}."""
+def cb_face(session, ticker, statement_type, period_type="annual"):
+    """
+    Fetch as-reported face statement from Calcbench detail page.
+    statement_type: income | balance | cash
+    period_type:    annual | quarterly
+    Returns list of {label, values:[...], indent, is_subtotal}
+    columns: list of period labels
+    """
+    url = (f"{CB_BASE}/api/asreported/"
+           f"?companyIdentifier={ticker}"
+           f"&statementType={statement_type}"
+           f"&periodType={period_type}")
     try:
-        r = session.post(f"{CB_BASE}/api/NormalizedValues",
-            json={"start_year":fy,"start_period":fp,"end_year":fy,"end_period":fp,
-                  "company_identifiers":[ticker],"metrics":[m[1] for m in metrics]},
-            timeout=25)
+        r = session.get(url, timeout=25)
         data = cb_json(r)
-        if not data: return {}
-        return {d.get("metric","").lower(): d.get("value") for d in data}
-    except Exception: return {}
+        if not data or not isinstance(data, list):
+            return [], []
+        # data is a list of period objects, each with lineItems
+        # Structure: [ {period, lineItems:[{label, value, ...}]} ]
+        # or flat list of line items with column values
+        # Try to parse both formats
+        if data and isinstance(data[0], dict):
+            # Check if it's the column-based format
+            if "columns" in data[0] or "lineItems" in data[0]:
+                return _parse_face_columnar(data)
+            # Flat list format
+            return _parse_face_flat(data)
+        return [], []
+    except Exception as ex:
+        return [], [str(ex)]
 
-def cb_rows(val_map, defs):
-    rows = []
-    for label, metric in defs:
-        v = val_map.get(metric.lower())
-        rows.append({"label":label,"value":v,
-                     "isTotal": metric in TOTALS,
-                     "indent":0,"section":"","unit":""})
-    return rows
+def _parse_face_columnar(data):
+    """Parse columnar face statement format."""
+    try:
+        cols    = data[0].get("columns", [])
+        items   = data[0].get("lineItems", [])
+        headers = [c.get("fiscal_period","") or c.get("label","") for c in cols]
+        rows = []
+        for item in items:
+            facts = item.get("facts") or []
+            vals  = []
+            for f in facts:
+                v = f.get("effective_value") if f.get("effective_value") is not None else f.get("fact_value")
+                vals.append(v)
+            rows.append({
+                "label":      item.get("label",""),
+                "values":     vals,
+                "indent":     item.get("tree_depth", 0),
+                "isSubtotal": item.get("is_subtotal", False),
+                "isAbstract": item.get("is_abstract", False),
+            })
+        return rows, headers
+    except Exception:
+        return [], []
 
-def cb_commentary(session, ticker, calcbench_id):
-    import re as _re
+def _parse_face_flat(data):
+    """Parse flat list face statement format."""
+    try:
+        # Group by period
+        periods = {}
+        for item in data:
+            p = item.get("period","") or item.get("fiscal_period","") or ""
+            if p not in periods: periods[p] = {}
+            label = item.get("label","") or item.get("lineItemLabel","")
+            value = item.get("value") or item.get("amount")
+            periods[p][label] = value
+        if not periods: return [], []
+        headers = sorted(periods.keys(), reverse=True)
+        all_labels = list(dict.fromkeys(
+            lbl for p in headers for lbl in periods[p].keys()
+        ))
+        rows = []
+        for lbl in all_labels:
+            vals = [periods[p].get(lbl) for p in headers]
+            rows.append({"label":lbl,"values":vals,"indent":0,"isSubtotal":False,"isAbstract":False})
+        return rows, headers
+    except Exception:
+        return [], []
+
+def cb_disclosures(session, ticker):
+    """Fetch text disclosures (MD&A etc) for most recent filing."""
+    tags = [
+        ("Management Discussion & Analysis",
+         "ManagementsDiscussionAndAnalysisOfFinancialConditionAndResultsOfOperations"),
+        ("Business Overview", "Business"),
+        ("Risk Factors",      "RiskFactors"),
+        ("Liquidity & Capital Resources", "LiquidityAndCapitalResources"),
+    ]
     sections = []
-    for title, tag in CB_COMMENTARY:
+    for title, tag in tags:
         try:
             r = session.get(
-                f"{CB_BASE}/api/disclosures?ticker={ticker}"
-                f"&disclosure_type=AS_REPORTED"
-                f"&accession_number={calcbench_id}"
-                f"&disclosure_field={tag}",
+                f"{CB_BASE}/api/disclosures"
+                f"?ticker={ticker}&disclosure_type=AS_REPORTED&disclosure_field={tag}",
                 timeout=20)
             data = cb_json(r)
-            if not data or not isinstance(data,list): continue
-            text = data[0].get("disclosure_text","") if data else ""
-            text = _re.sub(r"<[^>]+>"," ",text)
-            text = " ".join(text.split()).strip()
-            if len(text)>150:
-                sections.append({"title":title,"text":text[:12000]})
-        except Exception: continue
+            if not data or not isinstance(data, list): continue
+            text = ""
+            for item in data[:1]:
+                text = item.get("disclosure_text","") or item.get("text","") or ""
+                text = _re.sub(r"<[^>]+>", " ", text)
+                text = " ".join(text.split()).strip()
+            if len(text) > 150:
+                sections.append({"title": title, "text": text[:15000]})
+        except Exception:
+            continue
     return sections
-
-def cb_infer_periods(session, ticker):
-    """
-    Infer available fiscal periods directly from standardized data —
-    no filings API needed. Returns list of (year, period, label, form_type).
-    Annual (10-K): period=0. Quarterly (10-Q): period=1..4.
-    """
-    periods = []
-    try:
-        # Fetch last 3 years of annual + quarterly Revenue to discover periods
-        import datetime as _dt
-        cur_year = _dt.datetime.utcnow().year
-        r = session.post(f"{CB_BASE}/api/NormalizedValues",
-            json={"start_year": cur_year-3, "start_period": 1,
-                  "end_year":   cur_year,   "end_period":   4,
-                  "company_identifiers": [ticker],
-                  "metrics": ["Revenue"]},
-            timeout=20)
-        data = cb_json(r)
-        if not data: return []
-        seen = set()
-        for item in data:
-            fy  = item.get("fiscal_year")  or item.get("calendar_year")
-            fp  = item.get("fiscal_period") if item.get("fiscal_period") is not None else item.get("calendar_period")
-            if fy is None or fp is None: continue
-            key = (int(fy), int(fp))
-            if key in seen: continue
-            seen.add(key)
-            form  = "10-K" if int(fp)==0 else "10-Q"
-            q_lbl = f"Q{fp}" if int(fp)>0 else "Annual"
-            label = f"{fy} {q_lbl}"
-            periods.append({"fy":int(fy),"fp":int(fp),"label":label,
-                            "form":form,"period":f"{fy}-{q_lbl}","filedOn":""})
-        # Sort most recent first: annual then quarterly within year
-        periods.sort(key=lambda x: (x["fy"], x["fp"]), reverse=True)
-        return periods[:6]
-    except Exception:
-        return []
 
 @app.route("/financials/test", methods=["POST"])
 def financials_test():
     d = request.json
     try:
         session = cb_session(d.get("email",""), d.get("password",""))
-        r = session.get(f"{CB_BASE}/api/companies?tickers=MSFT", timeout=10)
-        data = cb_json(r)
-        if r.status_code == 200:
+        # Test with the face statement endpoint
+        r = session.get(
+            f"{CB_BASE}/api/asreported/?companyIdentifier=MSFT&statementType=income&periodType=annual",
+            timeout=15)
+        if r.status_code == 200 and r.text.strip():
             return jsonify({"ok": True})
-        return jsonify({"error": f"API returned {r.status_code}: {r.text[:100]}"}), 400
+        return jsonify({"error": f"API returned HTTP {r.status_code}. You may need API access — contact us@calcbench.com. Response: {r.text[:80]}"}), 403
     except ValueError as ve:
         return jsonify({"error": str(ve)}), 401
     except Exception as ex:
@@ -2867,12 +2875,12 @@ def financials_test():
 
 @app.route("/financials/fetch", methods=["POST"])
 def financials_fetch():
-    d = request.json
+    d        = request.json
     ticker   = (d.get("ticker") or "").upper().strip()
     email    = d.get("email","")
     password = d.get("password","")
     if not all([ticker, email, password]):
-        return jsonify({"error":"Ticker, email and password required."}), 400
+        return jsonify({"error": "Ticker, email and password required."}), 400
     try:
         session = cb_session(email, password)
 
@@ -2881,40 +2889,57 @@ def financials_fetch():
         try:
             r_co = session.get(f"{CB_BASE}/api/companies?tickers={ticker}", timeout=10)
             co   = cb_json(r_co)
-            if co and isinstance(co,list): company_name = co[0].get("name", ticker)
-        except Exception: pass
+            if co and isinstance(co, list) and co:
+                company_name = co[0].get("name", ticker)
+        except Exception:
+            pass
 
-        # Infer available periods directly from standardized data
-        periods = cb_infer_periods(session, ticker)
-        if not periods:
+        # Fetch all three face statements — annual first
+        inc_rows,  inc_cols  = cb_face(session, ticker, "income",   "annual")
+        bal_rows,  bal_cols  = cb_face(session, ticker, "balance",  "annual")
+        cf_rows,   cf_cols   = cb_face(session, ticker, "cash",     "annual")
+        # Quarterly
+        incq_rows, incq_cols = cb_face(session, ticker, "income",   "quarterly")
+        balq_rows, balq_cols = cb_face(session, ticker, "balance",  "quarterly")
+        cfq_rows,  cfq_cols  = cb_face(session, ticker, "cash",     "quarterly")
+
+        if not inc_rows and not bal_rows and not cf_rows and not incq_rows:
             return jsonify({"error":
-                f"No data found for {ticker}. "
-                f"Verify at https://www.calcbench.com/financial_statements/{ticker}"}), 404
+                f"No data returned for {ticker}. "
+                f"Verify at https://www.calcbench.com/detail/{ticker} "
+                "— if data is visible there, your subscription may not include API access."}), 404
 
-        result = []
-        for p in periods:
-            fy, fp = p["fy"], p["fp"]
-            inc_map = cb_standardized(session, ticker, CB_INCOME,   fy, fp)
-            bal_map = cb_standardized(session, ticker, CB_BALANCE,  fy, fp)
-            cf_map  = cb_standardized(session, ticker, CB_CASHFLOW, fy, fp)
-            # Only include period if we got at least some data
-            if not any([inc_map, bal_map, cf_map]): continue
-            result.append({
-                "id":         f"{p['form']}-{fy}-{fp}",
-                "type":       p["form"],
-                "period":     p["period"],
-                "filedOn":    p["filedOn"],
-                "income":     cb_rows(inc_map, CB_INCOME),
-                "balance":    cb_rows(bal_map, CB_BALANCE),
-                "cashflow":   cb_rows(cf_map,  CB_CASHFLOW),
-                "commentary": [],   # commentary requires filing ID — not available without filings API
-                "sourceUrl":  f"https://www.calcbench.com/financial_statements/{ticker}",
+        # Commentary
+        commentary = cb_disclosures(session, ticker)
+
+        # Build filings list: Annual + Quarterly as separate "filings"
+        filings = []
+        if inc_rows or bal_rows or cf_rows:
+            filings.append({
+                "id":         f"{ticker}-annual",
+                "type":       "10-K",
+                "period":     inc_cols[0] if inc_cols else "Annual",
+                "filedOn":    "",
+                "income":     {"rows": inc_rows,  "columns": inc_cols},
+                "balance":    {"rows": bal_rows,  "columns": bal_cols},
+                "cashflow":   {"rows": cf_rows,   "columns": cf_cols},
+                "commentary": commentary,
+                "sourceUrl":  f"https://www.calcbench.com/detail/{ticker}",
+            })
+        if incq_rows or balq_rows or cfq_rows:
+            filings.append({
+                "id":         f"{ticker}-quarterly",
+                "type":       "10-Q",
+                "period":     incq_cols[0] if incq_cols else "Quarterly",
+                "filedOn":    "",
+                "income":     {"rows": incq_rows,  "columns": incq_cols},
+                "balance":    {"rows": balq_rows,  "columns": balq_cols},
+                "cashflow":   {"rows": cfq_rows,   "columns": cfq_cols},
+                "commentary": [],
+                "sourceUrl":  f"https://www.calcbench.com/detail/{ticker}",
             })
 
-        if not result:
-            return jsonify({"error": f"Data found but all empty for {ticker}."}), 404
-
-        return jsonify({"ticker":ticker,"companyName":company_name,"filings":result})
+        return jsonify({"ticker": ticker, "companyName": company_name, "filings": filings})
     except ValueError as ve:
         return jsonify({"error": str(ve)}), 401
     except Exception as ex:
