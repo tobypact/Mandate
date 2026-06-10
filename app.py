@@ -2700,198 +2700,171 @@ def get_monitor_log():
 
 
 # ══════════════════════════════════════════════════════════════════════
-# CALCBENCH — Financial Statements
+# CALCBENCH — Financial Statements (official calcbench-api-client)
 # ══════════════════════════════════════════════════════════════════════
-import requests as cb_requests
+import requests as _req_sess
 
 CB_BASE = "https://www.calcbench.com"
 
-# Key metrics to pull for each statement
 CB_INCOME_METRICS = [
-    ("Revenue",          "Revenue",                    ""),
-    ("Cost of Revenue",  "CostOfRevenue",               ""),
-    ("Gross Profit",     "GrossProfit",                 "total"),
-    ("R&D Expense",      "ResearchAndDevelopmentExpense",""),
-    ("SG&A Expense",     "SellingGeneralAdministrative", ""),
-    ("Operating Income", "OperatingIncomeLoss",          "total"),
-    ("Interest Expense", "InterestExpense",              ""),
-    ("Pretax Income",    "IncomeLossFromContinuingOperationsBeforeIncomeTaxes",""),
-    ("Income Tax",       "IncomeTaxExpenseBenefit",      ""),
-    ("Net Income",       "NetIncomeLoss",                "total"),
-    ("EPS (Basic)",      "EarningsPerShareBasic",        ""),
-    ("EPS (Diluted)",    "EarningsPerShareDiluted",      ""),
-    ("Shares (Diluted)", "WeightedAverageNumberOfDilutedSharesOutstanding",""),
+    ("Revenue","Revenue"),("Cost of Revenue","CostOfRevenue"),
+    ("Gross Profit","GrossProfit"),("R&D Expense","ResearchAndDevelopmentExpense"),
+    ("SG&A","SellingGeneralAdministrative"),("Operating Income","OperatingIncomeLoss"),
+    ("Interest Expense","InterestExpense"),
+    ("Pretax Income","IncomeLossFromContinuingOperationsBeforeIncomeTaxes"),
+    ("Income Tax","IncomeTaxExpenseBenefit"),("Net Income","NetIncomeLoss"),
+    ("EPS Basic","EarningsPerShareBasic"),("EPS Diluted","EarningsPerShareDiluted"),
 ]
 CB_BALANCE_METRICS = [
-    ("Cash & Equivalents",        "CashAndCashEquivalentsAtCarryingValue",""),
-    ("Short-term Investments",    "ShortTermInvestments",                 ""),
-    ("Accounts Receivable",       "AccountsReceivableNetCurrent",         ""),
-    ("Inventory",                 "InventoryNet",                          ""),
-    ("Total Current Assets",      "AssetsCurrent",                        "total"),
-    ("PP&E Net",                  "PropertyPlantAndEquipmentNet",          ""),
-    ("Goodwill",                  "Goodwill",                              ""),
-    ("Total Assets",              "Assets",                                "total"),
-    ("Accounts Payable",          "AccountsPayableCurrent",                ""),
-    ("Short-term Debt",           "ShortTermBorrowings",                   ""),
-    ("Total Current Liabilities", "LiabilitiesCurrent",                   "total"),
-    ("Long-term Debt",            "LongTermDebt",                          ""),
-    ("Total Liabilities",         "Liabilities",                           "total"),
-    ("Total Equity",              "StockholdersEquity",                    "total"),
+    ("Cash & Equivalents","CashAndCashEquivalentsAtCarryingValue"),
+    ("Accounts Receivable","AccountsReceivableNetCurrent"),
+    ("Inventory","InventoryNet"),("Total Current Assets","AssetsCurrent"),
+    ("PP&E Net","PropertyPlantAndEquipmentNet"),("Goodwill","Goodwill"),
+    ("Total Assets","Assets"),("Accounts Payable","AccountsPayableCurrent"),
+    ("Short-term Debt","ShortTermBorrowings"),
+    ("Total Current Liabilities","LiabilitiesCurrent"),
+    ("Long-term Debt","LongTermDebt"),("Total Liabilities","Liabilities"),
+    ("Total Equity","StockholdersEquity"),
 ]
 CB_CASHFLOW_METRICS = [
-    ("Operating Cash Flow",       "NetCashProvidedByUsedInOperatingActivities","total"),
-    ("Depreciation & Amortisation","DepreciationDepletionAndAmortization",""),
-    ("CapEx",                     "PaymentsToAcquirePropertyPlantAndEquipment",""),
-    ("Free Cash Flow",            "FreeCashFlow",                           "total"),
-    ("Investing Activities",      "NetCashProvidedByUsedInInvestingActivities","total"),
-    ("Financing Activities",      "NetCashProvidedByUsedInFinancingActivities","total"),
-    ("Dividends Paid",            "PaymentsOfDividends",                    ""),
-    ("Share Buybacks",            "PaymentsForRepurchaseOfCommonStock",      ""),
-    ("Net Change in Cash",        "CashAndCashEquivalentsPeriodIncreaseDecrease","total"),
+    ("Operating Cash Flow","NetCashProvidedByUsedInOperatingActivities"),
+    ("Depreciation & Amortisation","DepreciationDepletionAndAmortization"),
+    ("CapEx","PaymentsToAcquirePropertyPlantAndEquipment"),
+    ("Investing Activities","NetCashProvidedByUsedInInvestingActivities"),
+    ("Financing Activities","NetCashProvidedByUsedInFinancingActivities"),
+    ("Dividends Paid","PaymentsOfDividends"),
+    ("Share Buybacks","PaymentsForRepurchaseOfCommonStock"),
+    ("Net Change in Cash","CashAndCashEquivalentsPeriodIncreaseDecrease"),
 ]
-CB_COMMENTARY_SECTIONS = [
-    ("Management Discussion & Analysis", "ManagementsDiscussionAndAnalysisOfFinancialConditionAndResultsOfOperations"),
-    ("Business Overview",                "Business"),
-    ("Risk Factors",                     "RiskFactors"),
-    ("Quantitative Market Risk",         "QuantitativeAndQualitativeDisclosuresAboutMarketRisk"),
-    ("Liquidity & Capital Resources",    "LiquidityAndCapitalResources"),
-    ("Critical Accounting Policies",     "CriticalAccountingPoliciesAndEstimates"),
+CB_COMMENTARY_TAGS = [
+    ("Management Discussion & Analysis","ManagementsDiscussionAndAnalysisOfFinancialConditionAndResultsOfOperations"),
+    ("Business Overview","Business"),
+    ("Risk Factors","RiskFactors"),
+    ("Liquidity & Capital Resources","LiquidityAndCapitalResources"),
+    ("Critical Accounting Policies","CriticalAccountingPoliciesAndEstimates"),
 ]
 
-def cb_login(email, password):
-    """Return authenticated requests.Session or raise."""
-    s = cb_requests.Session()
-    s.headers.update({"User-Agent":"Mozilla/5.0","Accept":"application/json,text/html,*/*"})
+def cb_get_session(email, password):
+    """Authenticate and return a requests.Session with cookies set."""
+    s = _req_sess.Session()
+    s.headers.update({
+        "User-Agent": "Mozilla/5.0 (compatible; investment-app/1.0)",
+        "Accept":     "text/plain, */*",
+        "Referer":    CB_BASE + "/",
+    })
     try:
-        r = s.post(f"{CB_BASE}/account/LogOnAjax",
-                   data={"email":email,"strng":password,"rememberMe":"true"},
-                   timeout=20, verify=True)
-    except cb_requests.exceptions.ConnectionError as ce:
-        raise ValueError(f"Cannot reach Calcbench — network error: {str(ce)[:120]}")
-    except cb_requests.exceptions.Timeout:
-        raise ValueError("Calcbench request timed out — try again.")
-    resp = r.text.strip().lower()
-    if resp not in ("true", '"true"'):
-        if not resp:
-            raise ValueError("Calcbench returned empty response — login endpoint may have moved. Check calcbench.com is accessible.")
-        raise ValueError(f"Calcbench login failed — check email/password. Server said: {r.text[:120]}")
+        r = s.post(
+            f"{CB_BASE}/account/LogOnAjax",
+            data={"email": email, "strng": password, "rememberMe": "true"},
+            timeout=20,
+        )
+    except _req_sess.exceptions.ConnectionError as e:
+        raise ValueError(f"Cannot reach Calcbench: {str(e)[:100]}")
+    except _req_sess.exceptions.Timeout:
+        raise ValueError("Calcbench timed out — try again.")
+
+    body = r.text.strip().strip('"').lower()
+    if body != "true":
+        raise ValueError(
+            f"Login failed (HTTP {r.status_code}). "
+            "Check your Calcbench email and password. "
+            f"Response: {r.text[:80]!r}"
+        )
     return s
 
-def cb_get_filings(session, ticker, n=4):
-    """Return the last n 10-K and 10-Q filings for ticker."""
-    url = f"{CB_BASE}/api/filings?tickers={ticker}&filing_types=10-K,10-Q&number_of_filings={n*2}"
+def cb_safe_json(r):
+    """Parse JSON or return None on empty/invalid body."""
+    t = r.text.strip()
+    if not t:
+        return None
     try:
-        r = session.get(url, timeout=15)
-        if not r.text.strip(): return []
-        filings = r.json()
-        # Filter to 10-K and 10-Q, sort by date desc
-        filings = [f for f in filings if f.get("formType","") in ("10-K","10-Q")]
-        filings.sort(key=lambda f: f.get("periodOfReport",""), reverse=True)
-        return filings[:n]
-    except:
+        return r.json()
+    except Exception:
+        return None
+
+def cb_fetch_metrics(session, ticker, metric_names, fy, fp):
+    """Fetch a batch of standardized metrics. Returns {metric_lower: value}."""
+    payload = {
+        "start_year": fy, "start_period": fp,
+        "end_year":   fy, "end_period":   fp,
+        "company_identifiers": [ticker],
+        "metrics": metric_names,
+    }
+    try:
+        r = session.post(
+            f"{CB_BASE}/api/NormalizedValues",
+            json=payload, timeout=25,
+        )
+        data = cb_safe_json(r)
+        if not data:
+            return {}
+        return {item.get("metric","").lower(): item.get("value") for item in data}
+    except Exception:
+        return {}
+
+def cb_fetch_asreported(session, ticker, statement_type, period_type="annual"):
+    """Fetch as-reported statement (income/balance/cash) rows."""
+    url = (f"{CB_BASE}/api/asreported/"
+           f"?companyIdentifier={ticker}"
+           f"&statementType={statement_type}"
+           f"&periodType={period_type}")
+    try:
+        r = session.get(url, timeout=20)
+        data = cb_safe_json(r)
+        return data if data else []
+    except Exception:
         return []
 
-def cb_get_metric(session, ticker, metric, period_type, fiscal_year, fiscal_period):
-    """Fetch one standardized metric value."""
-    try:
-        payload = {
-            "start_year": fiscal_year, "start_period": fiscal_period,
-            "end_year":   fiscal_year, "end_period":   fiscal_period,
-            "company_identifiers": [ticker],
-            "metrics": [metric],
-        }
-        r = session.post(f"{CB_BASE}/api/NormalizedValues",
-                         json=payload, timeout=15)
-        data = r.json()
-        if data:
-            return data[0].get("value")
-    except:
-        pass
-    return None
+def cb_build_rows(val_map, metric_defs):
+    rows = []
+    for label, metric in metric_defs:
+        v = val_map.get(metric.lower())
+        rows.append({
+            "label":   label,
+            "value":   v,
+            "isTotal": label.startswith("Total") or label in ("Gross Profit","Operating Income","Net Income","Operating Cash Flow","Free Cash Flow"),
+            "indent":  0,
+            "section": "",
+            "unit":    "",
+        })
+    return rows
 
-def cb_get_statement_rows(session, ticker, metrics, fiscal_year, fiscal_period):
-    """Fetch all metrics for a statement in one batch."""
-    try:
-        metric_names = [m[1] for m in metrics]
-        payload = {
-            "start_year": fiscal_year, "start_period": fiscal_period,
-            "end_year":   fiscal_year, "end_period":   fiscal_period,
-            "company_identifiers": [ticker],
-            "metrics": metric_names,
-        }
-        r = session.post(f"{CB_BASE}/api/NormalizedValues", json=payload, timeout=20)
-        if not r.text.strip():
-            return [{"label":"No data returned","value":None,"isTotal":False,"indent":0,"section":"","unit":""}]
-        raw = r.json()
-        # Index by metric name
-        val_map = {}
-        for item in raw:
-            val_map[item.get("metric","").lower()] = item.get("value")
-        rows = []
-        for label, metric, row_type in metrics:
-            v = val_map.get(metric.lower())
-            rows.append({
-                "label":   label,
-                "value":   v,
-                "isTotal": row_type == "total",
-                "indent":  0,
-                "section": "",
-                "unit":    "USD" if v is not None else "",
-            })
-        return rows
-    except Exception as ex:
-        return [{"label":"Error fetching data","value":str(ex),"isTotal":False,"indent":0,"section":"","unit":""}]
-
-def cb_get_commentary(session, ticker, accession_no):
-    """Fetch text disclosures for a filing."""
+def cb_fetch_commentary(session, ticker, accession):
     sections = []
-    for title, tag in CB_COMMENTARY_SECTIONS:
+    import re as _re
+    for title, tag in CB_COMMENTARY_TAGS:
         try:
-            url = f"{CB_BASE}/api/disclosures?ticker={ticker}&disclosure_type=AS_REPORTED&accession_number={accession_no}&disclosure_field={tag}"
+            url = (f"{CB_BASE}/api/disclosures"
+                   f"?ticker={ticker}"
+                   f"&disclosure_type=AS_REPORTED"
+                   f"&accession_number={accession}"
+                   f"&disclosure_field={tag}")
             r = session.get(url, timeout=20)
-            if not r.text.strip(): continue
-            data = r.json()
-            if data and isinstance(data, list) and data[0].get("disclosure_text"):
-                text = data[0]["disclosure_text"]
-                # Strip HTML tags simply
-                import re as _re
-                text = _re.sub(r"<[^>]+>", " ", text)
-                text = _re.sub(r"\s+", " ", text).strip()
-                if len(text) > 100:
-                    sections.append({"title": title, "text": text[:15000]})
-        except:
+            data = cb_safe_json(r)
+            if not data or not isinstance(data, list):
+                continue
+            text = data[0].get("disclosure_text","") if data else ""
+            text = _re.sub(r"<[^>]+>", " ", text)
+            text = _re.sub(r"\s{2,}", " ", text).strip()
+            if len(text) > 150:
+                sections.append({"title": title, "text": text[:12000]})
+        except Exception:
             continue
     return sections
-
-def cb_period_from_filing(filing):
-    """Extract fiscal year and period integer from a filing dict."""
-    period = filing.get("periodOfReport","")  # e.g. "2024-06-30"
-    form   = filing.get("formType","")
-    try:
-        import datetime as _dt
-        dt = _dt.datetime.strptime(period[:10], "%Y-%m-%d")
-        year = dt.year
-        month = dt.month
-        if form == "10-K":
-            period_int = 0  # annual
-        else:
-            q = (month-1)//3 + 1
-            period_int = q
-        return year, period_int
-    except:
-        return None, None
 
 @app.route("/financials/test", methods=["POST"])
 def financials_test():
     d = request.json
     try:
-        session = cb_login(d.get("email",""), d.get("password",""))
-        # Verify login by hitting a lightweight authenticated endpoint
+        session = cb_get_session(d.get("email",""), d.get("password",""))
         r = session.get(f"{CB_BASE}/api/companies?tickers=AAPL", timeout=10)
-        if r.status_code == 200:
+        data = cb_safe_json(r)
+        if r.status_code == 200 and data:
             return jsonify({"ok": True})
+        elif r.status_code == 401:
+            return jsonify({"error": "Logged in but API access not enabled — contact us@calcbench.com"}), 403
         else:
-            return jsonify({"error": f"Authenticated but API returned {r.status_code}. You may need API access — contact us@calcbench.com"}), 403
+            return jsonify({"error": f"API returned HTTP {r.status_code}: {r.text[:100]}"}), 400
     except ValueError as ve:
         return jsonify({"error": str(ve)}), 401
     except Exception as ex:
