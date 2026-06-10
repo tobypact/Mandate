@@ -2731,7 +2731,7 @@ def cb_session(email, password):
     s.headers["User-Agent"] = "Mozilla/5.0 investment-app/1.0"
     try:
         r = s.post(f"{CB_BASE}/account/LogOnAjax",
-                   data={"email": email, "strng": password, "rememberMe": "true"},
+                   data={"email": email, "password": password, "rememberMe": "true"},
                    timeout=20)
     except _req.exceptions.ConnectionError as e:
         raise ValueError(f"Cannot reach Calcbench: {e}")
@@ -2750,18 +2750,20 @@ def cb_json(r):
 
 def cb_face(session, ticker, statement_type, period_type="annual"):
     """
-    Fetch as-reported face statement from Calcbench detail page.
-    statement_type: income | balance | cash
-    period_type:    annual | quarterly
-    Returns list of {label, values:[...], indent, is_subtotal}
-    columns: list of period labels
+    Fetch face statement via /api/faceStatement (mirrors calcbench.com/detail/ page).
+    statement_type: Income | Balance | CashFlow
+    period_type:    Annual | Quarterly
     """
-    url = (f"{CB_BASE}/api/asreported/"
-           f"?companyIdentifier={ticker}"
-           f"&statementType={statement_type}"
-           f"&periodType={period_type}")
+    url = f"{CB_BASE}/api/faceStatement"
+    params = {
+        "companyIdentifier": ticker,
+        "statementType":     statement_type,
+        "periodType":        period_type,
+        "allPeriods":        False,
+        "descendingDates":   False,
+    }
     try:
-        r = session.get(url, timeout=25)
+        r = session.get(url, params=params, timeout=25)
         data = cb_json(r)
         if not data or not isinstance(data, list):
             return [], []
@@ -2863,7 +2865,8 @@ def financials_test():
         session = cb_session(d.get("email",""), d.get("password",""))
         # Test with the face statement endpoint
         r = session.get(
-            f"{CB_BASE}/api/asreported/?companyIdentifier=MSFT&statementType=income&periodType=annual",
+            f"{CB_BASE}/api/faceStatement",
+            params={"companyIdentifier":"MSFT","statementType":"Income","periodType":"Annual"},
             timeout=15)
         if r.status_code == 200 and r.text.strip():
             return jsonify({"ok": True})
@@ -2895,13 +2898,13 @@ def financials_fetch():
             pass
 
         # Fetch all three face statements — annual first
-        inc_rows,  inc_cols  = cb_face(session, ticker, "income",   "annual")
-        bal_rows,  bal_cols  = cb_face(session, ticker, "balance",  "annual")
-        cf_rows,   cf_cols   = cb_face(session, ticker, "cash",     "annual")
+        inc_rows,  inc_cols  = cb_face(session, ticker, "Income",   "Annual")
+        bal_rows,  bal_cols  = cb_face(session, ticker, "Balance",  "Annual")
+        cf_rows,   cf_cols   = cb_face(session, ticker, "CashFlow", "Annual")
         # Quarterly
-        incq_rows, incq_cols = cb_face(session, ticker, "income",   "quarterly")
-        balq_rows, balq_cols = cb_face(session, ticker, "balance",  "quarterly")
-        cfq_rows,  cfq_cols  = cb_face(session, ticker, "cash",     "quarterly")
+        incq_rows, incq_cols = cb_face(session, ticker, "Income",   "Quarterly")
+        balq_rows, balq_cols = cb_face(session, ticker, "Balance",  "Quarterly")
+        cfq_rows,  cfq_cols  = cb_face(session, ticker, "CashFlow", "Quarterly")
 
         if not inc_rows and not bal_rows and not cf_rows and not incq_rows:
             return jsonify({"error":
