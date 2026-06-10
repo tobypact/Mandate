@@ -26,7 +26,8 @@ def compute_rsi(series, period=14):
 
 def run_backtest(ticker, start, end, capital, rsi_buy, rsi_sell_enabled, rsi_sell,
                  profit_target, stop_loss, buy_metrics, sell_metrics,
-                 buy_logic, sell_logic, benchmark, bm_mode):
+                 buy_logic, sell_logic, benchmark, bm_mode, extra_params=None):
+    extra_params = extra_params or {}
     bm = buy_metrics or {}
     sm = sell_metrics or {}
 
@@ -271,8 +272,67 @@ def run_backtest(ticker, start, end, capital, rsi_buy, rsi_sell_enabled, rsi_sel
         name = info.get("shortName") or ticker
     except: pass
 
+    # ── Rolling metrics: Sharpe, Drawdown, Volatility vs historical ──
+    rolling_metrics = {}
+    try:
+        roll_win  = int(extra_params.get("rollWin",  30))
+        roll_hist = int(extra_params.get("rollHist", 20))
+        hist_start = str((pd.Timestamp(start) - pd.DateOffset(years=roll_hist)).date())
+        hist_df   = yf.download(ticker, start=hist_start, end=end, progress=False, auto_adjust=True)
+        if not hist_df.empty:
+            hp = hist_df["Close"].squeeze()
+            hr = hp.pct_change().dropna()
+            dates_all = [str(d)[:10] for d in hr.index]
+            n = len(hr)
+            # Rolling Sharpe (annualised)
+            roll_sharpe = []
+            for i in range(n):
+                if i < roll_win - 1:
+                    roll_sharpe.append(None)
+                else:
+                    sl = hr.iloc[i-roll_win+1:i+1]
+                    std = float(sl.std())
+                    roll_sharpe.append(round(float(sl.mean())/std*np.sqrt(252),3) if std>0 else None)
+            # Rolling Volatility (annualised %)
+            roll_vol = []
+            for i in range(n):
+                if i < roll_win - 1:
+                    roll_vol.append(None)
+                else:
+                    sl = hr.iloc[i-roll_win+1:i+1]
+                    roll_vol.append(round(float(sl.std())*np.sqrt(252)*100,2))
+            # Rolling Max Drawdown (%)
+            roll_dd = []
+            for i in range(n):
+                if i < roll_win - 1:
+                    roll_dd.append(None)
+                else:
+                    prices_sl = hp.iloc[i-roll_win+1:i+1]
+                    peak = prices_sl.cummax()
+                    dd   = ((prices_sl - peak)/peak).min()
+                    roll_dd.append(round(float(dd)*100,2))
+            # Historical percentiles for context lines
+            valid_s = [v for v in roll_sharpe if v is not None]
+            valid_v = [v for v in roll_vol    if v is not None]
+            valid_d = [v for v in roll_dd     if v is not None]
+            def pct(arr, p): return round(float(np.percentile(arr,p)),3) if arr else None
+            rolling_metrics = {
+                "dates":      dates_all,
+                "rollWin":    roll_win,
+                "rollHist":   roll_hist,
+                "sharpe":     roll_sharpe,
+                "vol":        roll_vol,
+                "drawdown":   roll_dd,
+                "sharpeP25":  pct(valid_s,25), "sharpeP50":pct(valid_s,50), "sharpeP75":pct(valid_s,75),
+                "volP25":     pct(valid_v,25),  "volP50":pct(valid_v,50),   "volP75":pct(valid_v,75),
+                "ddP25":      pct(valid_d,25),  "ddP50":pct(valid_d,50),    "ddP75":pct(valid_d,75),
+            }
+    except Exception as ex:
+        rolling_metrics = {"error": str(ex)}
+
     return {"trades":trades,"equity":equity,"bmEquity":bm_eq,"bmLabel":bm_lbl,
-            "stats":stats,"riskMetrics":risk,"stockName":name,"ticker":ticker}, None
+            "stats":stats,"riskMetrics":risk,"stockName":name,"ticker":ticker,
+            "rollingMetrics":rolling_metrics}, None
 
 
 def calc_valuation(price, eps, gr, years=5, disc=0.10):
@@ -536,6 +596,11 @@ tr:hover td{background:var(--sur2)}
           </div>
         </div>
       </div>
+      <div class="sl">Rolling Risk Metrics <span style="font-weight:400;font-size:.65rem;text-transform:none;letter-spacing:0;color:var(--mut)">— vs historical</span></div>
+      <div class="r2">
+        <div class="fd"><label>Window (days)</label><input type="number" id="bt-roll-win" value="30" min="5" max="252" placeholder="30"/></div>
+        <div class="fd"><label>History (years)</label><input type="number" id="bt-roll-hist" value="20" min="1" max="50" placeholder="20"/></div>
+      </div>
       <button class="btn bp" id="bt-run" onclick="runBacktest()" style="margin-top:.75rem">▶ Run Mandate</button>
       <div class="er" id="bt-err"></div>
     </div></div>
@@ -576,6 +641,11 @@ tr:hover td{background:var(--sur2)}
       <div class="card" style="margin-bottom:1rem" id="hypo-card">
         <div class="ch">Hypothetical Return <span style="font-size:.65rem;font-weight:400;text-transform:none;letter-spacing:0;color:var(--mut)">— IRR applied to full period including cash days</span></div>
         <div class="cb" id="hypo-body"></div>
+      </div>
+
+      <div class="card" style="margin-bottom:1rem" id="rolling-card">
+        <div class="ch">Rolling Risk Metrics <span id="rolling-ch-sub" style="font-size:.65rem;font-weight:400;text-transform:none;letter-spacing:0;color:var(--mut)"></span></div>
+        <div class="cb" id="rolling-body"></div>
       </div>
 
       <div class="card" style="margin-bottom:1rem">
@@ -1111,6 +1181,8 @@ async function runBacktest(){
     andorLogic:{buyLogic:gate.buy,sellLogic:gate.sell},
     buyMetrics:{maxDrawdown:gv('bm-maxdd'),var95:gv('bm-var'),pe:gv('bm-pe'),pb:gv('bm-pb'),eps:gv('bm-eps'),divYield:gv('bm-divy'),roe:gv('bm-roe'),de:gv('bm-de'),fcfYield:gv('bm-fcf'),revGrowth:gv('bm-rev')},
     sellMetrics:{maxDrawdown:gv('sm-maxdd'),var95:gv('sm-var'),pe:gv('sm-pe'),pb:gv('sm-pb'),eps:gv('sm-eps'),divYield:gv('sm-divy'),roe:gv('sm-roe'),de:gv('sm-de'),fcfYield:gv('sm-fcf'),revGrowth:gv('sm-rev')},
+    rollWin: parseInt(sv('bt-roll-win'))||30,
+    rollHist: parseInt(sv('bt-roll-hist'))||20,
   };
   try{
     const r=await fetch('/backtest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
@@ -1213,6 +1285,9 @@ function renderBt(data,params){
     {l:'Correlation',v:rm.corrBm??'—',s:'vs benchmark',c:'neu'},
   ].map(c=>`<div class="sc"><div class="sl2">${c.l}</div><div class="sv ${c.c}">${c.v}</div><div class="ss">${c.s}</div></div>`).join('');
 
+  // Rolling metrics
+  renderRolling(data.rollingMetrics);
+
   // ── Hypothetical Return card ──
   const hypoCard = document.getElementById('hypo-card');
   const hypoBody = document.getElementById('hypo-body');
@@ -1260,6 +1335,67 @@ function renderBt(data,params){
   } else {
     hypoCard.style.display='none';
   }
+}
+
+// ── ROLLING METRICS ──────────────────────────────────────────────────
+let rollSharpeChart=null, rollVolChart=null, rollDdChart=null;
+
+function renderRolling(rm){
+  const card = document.getElementById('rolling-card');
+  if(!rm || rm.error || !rm.dates){ card.style.display='none'; return; }
+  card.style.display='block';
+  document.getElementById('rolling-ch-sub').textContent =
+    `${rm.rollWin}-day rolling window · ${rm.rollHist}-yr history · 25th/50th/75th percentile bands`;
+
+  // Percentile reference line helper
+  function pctLine(val, n){ return val !== null ? new Array(n).fill(val) : []; }
+  const n = rm.dates.length;
+
+  // ── Helper to build chart with percentile bands ──
+  function makeRollChart(canvasId, label, data, p25, p50, p75, prefix, color){
+    const existing = Chart.getChart(canvasId);
+    if(existing) existing.destroy();
+    const visVals = data.filter(v=>v!=null);
+    const autoScale = visVals.length ? smartScale(visVals.concat([p25,p50,p75].filter(v=>v!=null)), prefix) : {};
+    return new Chart(document.getElementById(canvasId),{type:'line',data:{labels:rm.dates,datasets:[
+      {label,data,borderColor:color,borderWidth:2,pointRadius:0,tension:.3,fill:false,spanGaps:true,order:1},
+      {label:'75th pct',data:pctLine(p75,n),borderColor:'#CBD5E1',borderWidth:1,pointRadius:0,borderDash:[3,3],fill:false,order:2},
+      {label:'50th pct (median)',data:pctLine(p50,n),borderColor:'#94A3B8',borderWidth:1.5,pointRadius:0,borderDash:[5,3],fill:false,order:3},
+      {label:'25th pct',data:pctLine(p25,n),borderColor:'#CBD5E1',borderWidth:1,pointRadius:0,borderDash:[3,3],fill:false,order:4},
+    ]},options:{...chartOpts(prefix,visVals),
+      plugins:{...chartOpts(prefix,visVals).plugins,
+        legend:{labels:{color:'#94A3B8',font:{family:'Inter',size:10},
+          filter:item=>!['75th pct','25th pct'].includes(item.text)}}}}});
+  }
+
+  document.getElementById('rolling-body').innerHTML = `
+    <div style="font-size:.72rem;color:var(--mut);margin-bottom:.85rem">
+      Each point is computed over the prior <strong>${rm.rollWin} days</strong>. Dashed lines show the 25th, 50th and 75th percentile of all rolling windows across the full <strong>${rm.rollHist}-year history</strong> — so you can see whether current conditions are elevated, compressed, or typical.
+    </div>
+    <div class="ct" style="margin-bottom:.5rem">Rolling Sharpe Ratio (${rm.rollWin}-day)</div>
+    <div class="cc" style="margin-bottom:.85rem;padding:.75rem"><canvas id="roll-sharpe-chart" style="max-height:160px"></canvas></div>
+    <div class="ct" style="margin-bottom:.5rem">Rolling Volatility — annualised % (${rm.rollWin}-day)</div>
+    <div class="cc" style="margin-bottom:.85rem;padding:.75rem"><canvas id="roll-vol-chart" style="max-height:160px"></canvas></div>
+    <div class="ct" style="margin-bottom:.5rem">Rolling Max Drawdown % (${rm.rollWin}-day)</div>
+    <div class="cc" style="margin-bottom:.85rem;padding:.75rem"><canvas id="roll-dd-chart" style="max-height:160px"></canvas></div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:.6rem;margin-top:.75rem">
+      <div class="sc"><div class="sl2">Current Sharpe</div>
+        <div class="sv ${rm.sharpe.filter(v=>v!=null).slice(-1)[0]>=rm.sharpeP50?'pos':'neg'}">${rm.sharpe.filter(v=>v!=null).slice(-1)[0]??'—'}</div>
+        <div class="ss">median ${rm.sharpeP50} · 75th ${rm.sharpeP75}</div></div>
+      <div class="sc"><div class="sl2">Current Volatility</div>
+        <div class="sv ${rm.vol.filter(v=>v!=null).slice(-1)[0]<=rm.volP50?'pos':'neg'}">${rm.vol.filter(v=>v!=null).slice(-1)[0]??'—'}%</div>
+        <div class="ss">median ${rm.volP50}% · 75th ${rm.volP75}%</div></div>
+      <div class="sc"><div class="sl2">Current Drawdown</div>
+        <div class="sv ${rm.drawdown.filter(v=>v!=null).slice(-1)[0]>=rm.ddP50?'neg':'pos'}">${rm.drawdown.filter(v=>v!=null).slice(-1)[0]??'—'}%</div>
+        <div class="ss">median ${rm.ddP50}% · 25th ${rm.ddP25}%</div></div>
+    </div>`;
+
+  // Render after DOM update
+  setTimeout(()=>{
+    makeRollChart('roll-sharpe-chart','Rolling Sharpe',rm.sharpe,rm.sharpeP25,rm.sharpeP50,rm.sharpeP75,'','#334155');
+    makeRollChart('roll-vol-chart','Rolling Volatility (%)',rm.vol,rm.volP25,rm.volP50,rm.volP75,'','#D97706');
+    makeRollChart('roll-dd-chart','Rolling Max Drawdown (%)',rm.drawdown,rm.ddP25,rm.ddP50,rm.ddP75,'','#DC2626');
+  }, 50);
 }
 
 // ── VALUATION
@@ -1614,7 +1750,8 @@ def backtest():
             buy_logic=d.get("andorLogic",{}).get("buyLogic","or"),
             sell_logic=d.get("andorLogic",{}).get("sellLogic","or"),
             benchmark=(d.get("benchmark") or "SPY").upper().strip(),
-            bm_mode=d.get("bmMode","hold"))
+            bm_mode=d.get("bmMode","hold"),
+            extra_params={"rollWin":d.get("rollWin",30),"rollHist":d.get("rollHist",20)})
         if e: return jsonify({"error":e}), 400
         return jsonify(r)
     except Exception as ex:
