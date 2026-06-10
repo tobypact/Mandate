@@ -2879,54 +2879,66 @@ def financials_fetch():
     if not ticker or not email or not password:
         return jsonify({"error":"Ticker, email and password are required."}), 400
     try:
-        session  = cb_login(email, password)
-        filings  = cb_get_filings(session, ticker, n=6)
-        if not filings:
-            # Fallback: try direct company lookup
-            co_url = f"{CB_BASE}/api/companies?tickers={ticker}"
-            co_r   = session.get(co_url, timeout=10).json()
-            company_name = co_r[0].get("name","") if co_r else ticker
-            return jsonify({"error": f"No 10-K/10-Q filings found for {ticker} on Calcbench. Check the ticker symbol."}), 400
+        session = cb_get_session(email, password)
 
-        # Get company name
+        # Company name
+        company_name = ticker
         try:
-            co_url  = f"{CB_BASE}/api/companies?tickers={ticker}"
-            co_r2 = session.get(co_url, timeout=10)
-            co_data = co_r2.json() if co_r2.text.strip() else []
-            company_name = co_data[0].get("name", ticker) if co_data else ticker
-        except:
-            company_name = ticker
+            r_co = session.get(f"{CB_BASE}/api/companies?tickers={ticker}", timeout=10)
+            co_data = cb_safe_json(r_co)
+            if co_data and isinstance(co_data, list):
+                company_name = co_data[0].get("name", ticker)
+        except Exception:
+            pass
+
+        # Recent filings
+        filings_raw = []
+        try:
+            r_f = session.get(
+                f"{CB_BASE}/api/filings?tickers={ticker}&filing_types=10-K,10-Q&number_of_filings=8",
+                timeout=15)
+            fd = cb_safe_json(r_f)
+            if fd and isinstance(fd, list):
+                filings_raw = [f for f in fd if f.get("formType","") in ("10-K","10-Q")]
+                filings_raw.sort(key=lambda f: f.get("periodOfReport",""), reverse=True)
+                filings_raw = filings_raw[:4]
+        except Exception:
+            pass
+
+        if not filings_raw:
+            return jsonify({"error": f"No 10-K/10-Q filings found for {ticker}. Check the ticker on Calcbench."}), 404
 
         result_filings = []
-        for filing in filings[:4]:  # limit to 4 filings
-            fy, fp = cb_period_from_filing(filing)
-            accession = filing.get("accession_number","")
-            period_label = filing.get("periodOfReport","")[:10]
-            filed_on     = filing.get("filed","")[:10]
+        for filing in filings_raw:
             form_type    = filing.get("formType","")
-
-            income   = cb_get_statement_rows(session, ticker, CB_INCOME_METRICS,   fy, fp) if fy else []
-            balance  = cb_get_statement_rows(session, ticker, CB_BALANCE_METRICS,  fy, fp) if fy else []
-            cashflow = cb_get_statement_rows(session, ticker, CB_CASHFLOW_METRICS, fy, fp) if fy else []
-            commentary = cb_get_commentary(session, ticker, accession)
-
+            period_label = (filing.get("periodOfReport","") or "")[:10]
+            filed_on     = (filing.get("filed","") or "")[:10]
+            accession    = filing.get("accession_number","") or ""
+            fy = fp = None
+            try:
+                import datetime as _dt
+                dt = _dt.datetime.strptime(period_label, "%Y-%m-%d")
+                fy = dt.year
+                fp = 0 if form_type == "10-K" else (dt.month - 1) // 3 + 1
+            except Exception:
+                pass
+            income = balance = cashflow = []
+            if fy is not None:
+                inc_map = cb_fetch_metrics(session, ticker, [m[1] for m in CB_INCOME_METRICS],  fy, fp)
+                bal_map = cb_fetch_metrics(session, ticker, [m[1] for m in CB_BALANCE_METRICS],  fy, fp)
+                cf_map  = cb_fetch_metrics(session, ticker, [m[1] for m in CB_CASHFLOW_METRICS], fy, fp)
+                income   = cb_build_rows(inc_map, CB_INCOME_METRICS)
+                balance  = cb_build_rows(bal_map, CB_BALANCE_METRICS)
+                cashflow = cb_build_rows(cf_map,  CB_CASHFLOW_METRICS)
+            commentary = cb_fetch_commentary(session, ticker, accession) if accession else []
             result_filings.append({
-                "id":        accession or f"{form_type}-{period_label}",
-                "type":      form_type,
-                "period":    period_label,
-                "filedOn":   filed_on,
-                "income":    income,
-                "balance":   balance,
-                "cashflow":  cashflow,
-                "commentary":commentary,
-                "sourceUrl": f"https://www.calcbench.com/financial_statements/{ticker}",
+                "id":         accession or f"{form_type}-{period_label}",
+                "type":       form_type, "period": period_label, "filedOn": filed_on,
+                "income":     income,    "balance": balance,    "cashflow": cashflow,
+                "commentary": commentary,
+                "sourceUrl":  f"https://www.calcbench.com/financial_statements/{ticker}",
             })
-
-        return jsonify({
-            "ticker":      ticker,
-            "companyName": company_name,
-            "filings":     result_filings,
-        })
+        return jsonify({"ticker": ticker, "companyName": company_name, "filings": result_filings})
     except ValueError as ve:
         return jsonify({"error": str(ve)}), 401
     except Exception as ex:
