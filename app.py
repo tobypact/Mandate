@@ -2812,53 +2812,43 @@ def cb_commentary(session, ticker, calcbench_id):
         except Exception: continue
     return sections
 
-def cb_filings(session, ticker):
-    """Return filings using the correct Calcbench filings API."""
-    # Use the standardized data endpoint to find recent periods
-    # Fall back to direct API call with proper parameters
-    urls_to_try = [
-        f"{CB_BASE}/api/filings?tickers={ticker}&filing_types=10-K,10-Q&Number=8",
-        f"{CB_BASE}/api/filings?company_identifiers={ticker}&filing_types=10-K,10-Q&number_of_filings=8",
-        f"{CB_BASE}/api/filings?tickers={ticker}&Number=8",
-    ]
-    for url in urls_to_try:
-        try:
-            r = session.get(url, timeout=15)
-            data = cb_json(r)
-            if data and isinstance(data, list) and len(data) > 0:
-                # Filter to 10-K and 10-Q
-                filtered = [f for f in data
-                           if any(t in str(f.get("formType","") or f.get("document_type","") or "")
-                                  for t in ("10-K","10-Q"))]
-                if filtered:
-                    filtered.sort(key=lambda f: (
-                        f.get("periodOfReport") or f.get("period_end_date") or ""), reverse=True)
-                    return filtered[:4]
-                # Even if not filtered, return first 4 if we got data
-                return data[:4]
-        except Exception:
-            continue
-    return []
-
-def cb_period(filing):
-    """Extract fiscal year and period from a filing dict."""
-    import datetime as _dt
-    # Try multiple field names Calcbench uses
-    period_str = (filing.get("periodOfReport") or
-                  filing.get("period_end_date") or
-                  filing.get("fiscal_year_end") or "")
-    form = (filing.get("formType") or filing.get("document_type") or "")
-    if not period_str: return None, None
+def cb_infer_periods(session, ticker):
+    """
+    Infer available fiscal periods directly from standardized data —
+    no filings API needed. Returns list of (year, period, label, form_type).
+    Annual (10-K): period=0. Quarterly (10-Q): period=1..4.
+    """
+    periods = []
     try:
-        # Handle both "2024-06-30" and "2024-06-30T00:00:00"
-        dt = _dt.datetime.fromisoformat(str(period_str)[:10])
-        fy = filing.get("fiscal_year") or filing.get("calendar_year") or dt.year
-        fp = filing.get("fiscal_period") or filing.get("calendar_period")
-        if fp is None:
-            fp = 0 if "10-K" in form else (dt.month-1)//3+1
-        return int(fy), int(fp)
+        # Fetch last 3 years of annual + quarterly Revenue to discover periods
+        import datetime as _dt
+        cur_year = _dt.datetime.utcnow().year
+        r = session.post(f"{CB_BASE}/api/NormalizedValues",
+            json={"start_year": cur_year-3, "start_period": 1,
+                  "end_year":   cur_year,   "end_period":   4,
+                  "company_identifiers": [ticker],
+                  "metrics": ["Revenue"]},
+            timeout=20)
+        data = cb_json(r)
+        if not data: return []
+        seen = set()
+        for item in data:
+            fy  = item.get("fiscal_year")  or item.get("calendar_year")
+            fp  = item.get("fiscal_period") if item.get("fiscal_period") is not None else item.get("calendar_period")
+            if fy is None or fp is None: continue
+            key = (int(fy), int(fp))
+            if key in seen: continue
+            seen.add(key)
+            form  = "10-K" if int(fp)==0 else "10-Q"
+            q_lbl = f"Q{fp}" if int(fp)>0 else "Annual"
+            label = f"{fy} {q_lbl}"
+            periods.append({"fy":int(fy),"fp":int(fp),"label":label,
+                            "form":form,"period":f"{fy}-{q_lbl}","filedOn":""})
+        # Sort most recent first: annual then quarterly within year
+        periods.sort(key=lambda x: (x["fy"], x["fp"]), reverse=True)
+        return periods[:6]
     except Exception:
-        return None, None
+        return []
 
 @app.route("/financials/test", methods=["POST"])
 def financials_test():
@@ -2894,58 +2884,35 @@ def financials_fetch():
             if co and isinstance(co,list): company_name = co[0].get("name", ticker)
         except Exception: pass
 
-        # Get filings
-        filings = cb_filings(session, ticker)
-        if not filings:
-            # Last resort: use standardized data to infer periods
-            # Try fetching recent annual data directly
-            r_std = session.post(f"{CB_BASE}/api/NormalizedValues",
-                json={"start_year":2022,"start_period":0,"end_year":2024,"end_period":0,
-                      "company_identifiers":[ticker],"metrics":["Revenue"]},
-                timeout=15)
-            std_data = cb_json(r_std)
-            if std_data:
-                filings = [{"formType":"10-K",
-                            "periodOfReport":f"{item['calendar_year']}-12-31",
-                            "filed": f"{item['calendar_year']}-01-01",
-                            "calcbench_id": None,
-                            "fiscal_year": item.get("fiscal_year"),
-                            "fiscal_period": 0}
-                           for item in std_data if item.get("calendar_year")][:4]
-            if not filings:
-                return jsonify({"error":
-                    f"No filings found for {ticker}. "
-                    "Confirm the ticker exists at calcbench.com/financial_statements/"+ticker
-                }), 404
+        # Infer available periods directly from standardized data
+        periods = cb_infer_periods(session, ticker)
+        if not periods:
+            return jsonify({"error":
+                f"No data found for {ticker}. "
+                f"Verify at https://www.calcbench.com/financial_statements/{ticker}"}), 404
 
         result = []
-        for filing in filings:
-            fy, fp = cb_period(filing)
-            form    = (filing.get("formType") or filing.get("document_type") or "10-K")
-            period  = str(filing.get("periodOfReport") or filing.get("period_end_date") or "")[:10]
-            filed   = str(filing.get("filed") or filing.get("filing_date") or "")[:10]
-            cb_id   = (filing.get("calcbench_id") or
-                       filing.get("accession_number") or
-                       filing.get("filing_id") or "")
-
-            income = balance = cashflow = []
-            if fy:
-                inc_map = cb_standardized(session, ticker, CB_INCOME,   fy, fp)
-                bal_map = cb_standardized(session, ticker, CB_BALANCE,  fy, fp)
-                cf_map  = cb_standardized(session, ticker, CB_CASHFLOW, fy, fp)
-                income   = cb_rows(inc_map, CB_INCOME)
-                balance  = cb_rows(bal_map, CB_BALANCE)
-                cashflow = cb_rows(cf_map,  CB_CASHFLOW)
-
-            commentary = cb_commentary(session, ticker, cb_id) if cb_id else []
-
+        for p in periods:
+            fy, fp = p["fy"], p["fp"]
+            inc_map = cb_standardized(session, ticker, CB_INCOME,   fy, fp)
+            bal_map = cb_standardized(session, ticker, CB_BALANCE,  fy, fp)
+            cf_map  = cb_standardized(session, ticker, CB_CASHFLOW, fy, fp)
+            # Only include period if we got at least some data
+            if not any([inc_map, bal_map, cf_map]): continue
             result.append({
-                "id":         str(cb_id) or f"{form}-{period}",
-                "type":       form, "period": period, "filedOn": filed,
-                "income":     income, "balance": balance, "cashflow": cashflow,
-                "commentary": commentary,
+                "id":         f"{p['form']}-{fy}-{fp}",
+                "type":       p["form"],
+                "period":     p["period"],
+                "filedOn":    p["filedOn"],
+                "income":     cb_rows(inc_map, CB_INCOME),
+                "balance":    cb_rows(bal_map, CB_BALANCE),
+                "cashflow":   cb_rows(cf_map,  CB_CASHFLOW),
+                "commentary": [],   # commentary requires filing ID — not available without filings API
                 "sourceUrl":  f"https://www.calcbench.com/financial_statements/{ticker}",
             })
+
+        if not result:
+            return jsonify({"error": f"Data found but all empty for {ticker}."}), 404
 
         return jsonify({"ticker":ticker,"companyName":company_name,"filings":result})
     except ValueError as ve:
