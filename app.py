@@ -463,8 +463,15 @@ tr:hover td{background:var(--sur2)}
       <div class="sl">Asset</div>
       <div class="fd"><label>Ticker</label><input id="bt-ticker" value="QQQ"/></div>
       <div class="r2">
-        <div class="fd"><label>Start</label><input type="date" id="bt-start" value="2000-01-01" style="font-size:.75rem;padding:.43rem .35rem"/></div>
-        <div class="fd"><label>End</label><input type="date" id="bt-end" value="2020-01-01" style="font-size:.75rem;padding:.43rem .35rem"/></div>
+        <div class="fd"><label>Start</label><input type="date" id="bt-start" value="2000-01-01" style="font-size:.75rem;padding:.43rem .35rem" oninput="calcDates('bt')"/></div>
+        <div class="fd"><label>End</label><input type="date" id="bt-end" value="2020-01-01" style="font-size:.75rem;padding:.43rem .35rem" oninput="calcDates('bt')"/></div>
+      </div>
+      <div class="fd">
+        <label>Natural Days <span style="font-weight:400;color:var(--mut)">(optional — fills missing date)</span></label>
+        <div style="display:flex;gap:.4rem;align-items:center">
+          <input type="number" id="bt-days" placeholder="e.g. 3650" min="1" style="flex:1" oninput="calcDates('bt')"/>
+          <div id="bt-days-hint" style="font-size:.68rem;color:var(--mut);white-space:nowrap;min-width:60px"></div>
+        </div>
       </div>
       <div class="sl">Capital</div>
       <div class="fd"><label>Initial Capital (USD)</label><input type="number" id="bt-capital" value="10000" min="100"/></div>
@@ -619,8 +626,15 @@ tr:hover td{background:var(--sur2)}
     <div class="fd"><label>Ticker 1</label><input id="pair-t1" value="QQQ"/></div>
     <div class="fd"><label>Ticker 2</label><input id="pair-t2" value="SPY"/></div>
     <div class="r2">
-      <div class="fd"><label>Start</label><input type="date" id="pair-start" value="2010-01-01" style="font-size:.75rem;padding:.43rem .35rem"/></div>
-      <div class="fd"><label>End</label><input type="date" id="pair-end" value="2024-01-01" style="font-size:.75rem;padding:.43rem .35rem"/></div>
+      <div class="fd"><label>Start</label><input type="date" id="pair-start" value="2010-01-01" style="font-size:.75rem;padding:.43rem .35rem" oninput="calcDates('pair')"/></div>
+      <div class="fd"><label>End</label><input type="date" id="pair-end" value="2024-01-01" style="font-size:.75rem;padding:.43rem .35rem" oninput="calcDates('pair')"/></div>
+    </div>
+    <div class="fd">
+      <label>Natural Days <span style="font-weight:400;color:var(--mut)">(optional — fills missing date)</span></label>
+      <div style="display:flex;gap:.4rem;align-items:center">
+        <input type="number" id="pair-days" placeholder="e.g. 3650" min="1" style="flex:1" oninput="calcDates('pair')"/>
+        <div id="pair-days-hint" style="font-size:.68rem;color:var(--mut);white-space:nowrap;min-width:60px"></div>
+      </div>
     </div>
     <div class="fd"><label>Rolling Correlation Window (days)</label><input type="number" id="pair-window" value="60" min="10" max="252" placeholder="e.g. 60"/></div>
 
@@ -1014,6 +1028,76 @@ function chartOpts(pre, allValues){
 function allVals(...datasets){
   return datasets.flat().filter(v=>v!=null&&!isNaN(v));
 }
+// ── Three-way date calculator ──────────────────────────────────────────
+// Rules:
+//   start + end  → compute days
+//   start + days → compute end
+//   end   + days → compute start
+//   all three    → prioritise start+end, update days
+function calcDates(pfx){
+  const sEl = document.getElementById(pfx+'-start');
+  const eEl = document.getElementById(pfx+'-end');
+  const dEl = document.getElementById(pfx+'-days');
+  const hEl = document.getElementById(pfx+'-days-hint');
+  if(!sEl||!eEl||!dEl) return;
+
+  const sVal = sEl.value;
+  const eVal = eEl.value;
+  const dVal = dEl.value ? parseInt(dEl.value) : null;
+
+  const hasS = sVal !== '';
+  const hasE = eVal !== '';
+  const hasD = dVal !== null && dVal > 0;
+
+  // Helper: add days to a date string, return YYYY-MM-DD
+  function addDays(dateStr, n){
+    const d = new Date(dateStr);
+    d.setDate(d.getDate() + n);
+    return d.toISOString().slice(0,10);
+  }
+  function diffDays(s, e){
+    return Math.round((new Date(e) - new Date(s)) / 86400000);
+  }
+  function approxYears(d){ return (d/365.25).toFixed(1)+'y'; }
+
+  if(hasS && hasE){
+    // Both dates filled — compute days
+    const diff = diffDays(sVal, eVal);
+    if(diff > 0){
+      dEl.value = diff;
+      if(hEl) hEl.textContent = '≈ '+approxYears(diff);
+    }
+  } else if(hasS && hasD && !hasE){
+    // Start + days → fill end
+    const end = addDays(sVal, dVal);
+    eEl.value = end;
+    if(hEl) hEl.textContent = '→ '+end;
+  } else if(hasE && hasD && !hasS){
+    // End + days → fill start
+    const start = addDays(eVal, -dVal);
+    sEl.value = start;
+    if(hEl) hEl.textContent = '← '+start;
+  } else if(hasS && !hasE && !hasD){
+    if(hEl) hEl.textContent = '';
+  } else if(hasD && !hasS && !hasE){
+    if(hEl) hEl.textContent = '≈ '+approxYears(dVal);
+  }
+}
+
+// Initialise hints on page load
+window.addEventListener('DOMContentLoaded', ()=>{
+  ['bt','pair'].forEach(pfx=>{
+    const sEl=document.getElementById(pfx+'-start');
+    const eEl=document.getElementById(pfx+'-end');
+    const dEl=document.getElementById(pfx+'-days');
+    if(sEl&&eEl&&dEl){
+      // Pre-calculate days for default dates
+      calcDates(pfx);
+    }
+  });
+});
+// ───────────────────────────────────────────────────────────────────────
+
 function tog(fldId,cbId){document.getElementById(fldId).classList.toggle('on',document.getElementById(cbId).checked)}
 function applyBm(){document.getElementById('bt-bm-custom').style.display=document.getElementById('bt-bm').value==='custom'?'block':'none'}
 function setBm(m){bmMode=m;document.getElementById('bm-hold').className=m==='hold'?'ao':'';document.getElementById('bm-rules').className=m==='rules'?'aa':''}
