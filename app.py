@@ -399,200 +399,7 @@ HTML = """<!DOCTYPE html>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>Investment Mandate & Capital Deployment</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js">
-
-// ══════════════════════════════════════════════════════
-// FINANCIALS — Calcbench integration
-// ══════════════════════════════════════════════════════
-let cbData = null; // full response from server
-
-function showFinTab(tab, btn){
-  document.querySelectorAll('.cb-tab').forEach(t=>t.style.display='none');
-  document.querySelectorAll('#cb-tabs .nb').forEach(b=>b.classList.remove('active'));
-  document.getElementById('cb-tab-'+tab).style.display='block';
-  btn.classList.add('active');
-}
-
-async function runFinancials(){
-  const btn    = document.getElementById('cb-run');
-  const errEl  = document.getElementById('cb-err');
-  const sw     = document.getElementById('cb-sw');
-  const resEl  = document.getElementById('cb-res');
-  const email  = (document.getElementById('cb-email').value||'').trim();
-  const pass   = document.getElementById('cb-pass').value||'';
-  const ticker = (document.getElementById('cb-ticker').value||'').trim().toUpperCase();
-
-  // Reset state
-  errEl.style.display='none'; errEl.textContent='';
-  errEl.style.background=''; errEl.style.borderColor=''; errEl.style.color='';
-
-  if(!email){ errEl.textContent='⚠ Enter your Calcbench email.'; errEl.style.display='block'; return; }
-  if(!pass){  errEl.textContent='⚠ Enter your Calcbench password.'; errEl.style.display='block'; return; }
-  if(!ticker){errEl.textContent='⚠ Enter a ticker symbol.'; errEl.style.display='block'; return; }
-
-  resEl.style.display='none';
-  sw.style.display='flex';
-  btn.disabled=true; btn.textContent='Fetching…';
-
-  try{
-    console.log('[Financials] Fetching', ticker, 'for', email);
-    const r = await fetch('/financials/fetch', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({email, password:pass, ticker})
-    });
-    console.log('[Financials] HTTP status:', r.status);
-
-    // Handle non-JSON responses gracefully
-    const text = await r.text();
-    console.log('[Financials] Raw response:', text.slice(0,200));
-    let data;
-    try { data = JSON.parse(text); }
-    catch(pe){ throw new Error('Server returned unexpected response (status '+r.status+'). Check Railway logs.'); }
-
-    if(data.error) throw new Error(data.error);
-    cbData = data;
-    renderFinancials(data);
-    sw.style.display='none';
-    resEl.style.display='block';
-  } catch(e){
-    sw.style.display='none';
-    errEl.textContent='⚠ '+e.message;
-    errEl.style.display='block';
-    console.error('[Financials] Error:', e);
-  } finally {
-    btn.disabled=false; btn.textContent='▶ Fetch';
-  }
-}
-
-async function testCbConnection(){
-  const email  = (document.getElementById('cb-email').value||'').trim();
-  const pass   = document.getElementById('cb-pass').value||'';
-  const errEl  = document.getElementById('cb-err');
-  errEl.style.display='none'; errEl.style.background=''; errEl.style.borderColor=''; errEl.style.color='';
-  if(!email||!pass){ errEl.textContent='⚠ Enter email and password first.'; errEl.style.display='block'; return; }
-  const btn = event.target;
-  btn.textContent='Testing…'; btn.disabled=true;
-  try{
-    const r = await fetch('/financials/test',{method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({email,password:pass})});
-    const text = await r.text();
-    let d; try{d=JSON.parse(text);}catch(e){throw new Error('Server error ('+r.status+')');}
-    if(d.ok){
-      errEl.textContent='✅ Connected successfully as '+email;
-      errEl.style.cssText='display:block;background:#F0FDF4;border-color:#BBF7D0;color:#16A34A;border:1px solid #BBF7D0;border-radius:6px;padding:.7rem .85rem;font-size:.78rem;margin-top:.6rem';
-    } else {
-      errEl.textContent='⚠ '+(d.error||'Connection failed');
-      errEl.style.display='block';
-    }
-  } catch(e){
-    errEl.textContent='⚠ '+e.message;
-    errEl.style.display='block';
-  }
-  finally{ btn.textContent='Test Connection'; btn.disabled=false; }
-}
-
-function switchFiling(){
-  if(!cbData) return;
-  const sel = document.getElementById('cb-filing-sel').value;
-  const filing = cbData.filings.find(f=>f.id===sel);
-  if(filing) renderFilingData(filing);
-}
-
-function renderFinancials(data){
-  document.getElementById('cb-company-name').textContent = data.companyName || data.ticker;
-  document.getElementById('cb-company-ticker').textContent = data.ticker;
-  document.getElementById('cb-filing-date').textContent = data.filings?.[0]?.filedOn || '—';
-  const srcLink = document.getElementById('cb-source-link');
-  srcLink.href = `https://www.calcbench.com/financial_statements/${data.ticker}`;
-
-  // Populate filing selector
-  const sel = document.getElementById('cb-filing-sel');
-  sel.innerHTML = (data.filings||[]).map(f=>
-    `<option value="${f.id}">${f.type} — ${f.period} (filed ${f.filedOn})</option>`
-  ).join('');
-
-  // Render first filing
-  if(data.filings?.[0]) renderFilingData(data.filings[0]);
-}
-
-function renderFilingData(filing){
-  document.getElementById('cb-income-title').textContent  = `Income Statement — ${filing.period}`;
-  document.getElementById('cb-balance-title').textContent  = `Balance Sheet — ${filing.period}`;
-  document.getElementById('cb-cashflow-title').textContent = `Cash Flow Statement — ${filing.period}`;
-  document.getElementById('cb-filing-date').textContent    = `${filing.type} · ${filing.period} · filed ${filing.filedOn}`;
-
-  renderFinTable('cb-income-body',  filing.income);
-  renderFinTable('cb-balance-body', filing.balance);
-  renderFinTable('cb-cashflow-body',filing.cashflow);
-  renderCommentary('cb-commentary-body', filing.commentary);
-}
-
-function fmtNum(v){
-  if(v==null||v==='') return '—';
-  const n = parseFloat(v);
-  if(isNaN(n)) return v;
-  const abs = Math.abs(n);
-  const sign = n<0?'(':'';
-  const end  = n<0?')':'';
-  if(abs>=1e9) return sign+'$'+(abs/1e9).toFixed(2)+'B'+end;
-  if(abs>=1e6) return sign+'$'+(abs/1e6).toFixed(1)+'M'+end;
-  if(abs>=1e3) return sign+'$'+(abs/1e3).toFixed(0)+'K'+end;
-  return sign+'$'+abs.toLocaleString()+end;
-}
-
-function renderFinTable(elId, rows){
-  const el = document.getElementById(elId);
-  if(!rows||!rows.length){ el.innerHTML='<div style="color:var(--mut);font-size:.8rem;padding:.5rem">No data available</div>'; return; }
-  // Group by section
-  let html = '<table style="width:100%;border-collapse:collapse;font-size:.8rem">';
-  let lastSection = null;
-  rows.forEach(row=>{
-    if(row.section && row.section !== lastSection){
-      html += `<tr><td colspan="3" style="padding:.55rem .75rem .25rem;font-size:.65rem;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--mut);background:var(--sur2);border-top:2px solid var(--bdr)">${row.section}</td></tr>`;
-      lastSection = row.section;
-    }
-    const isTotal = row.isTotal;
-    const style = isTotal ? 'font-weight:700;border-top:1px solid var(--bdr2)' : '';
-    const indent = row.indent>0 ? `padding-left:${0.75+row.indent*1}rem` : 'padding-left:.75rem';
-    const val = fmtNum(row.value);
-    const cls = parseFloat(row.value)<0 ? 'neg' : '';
-    html += `<tr>
-      <td style="${indent};padding-top:.42rem;padding-bottom:.42rem;${style};border-top:1px solid var(--bdr)">${row.label}</td>
-      <td style="text-align:right;padding:.42rem .75rem;${style};border-top:1px solid var(--bdr)" class="${cls}">${val}</td>
-      <td style="text-align:right;padding:.42rem .75rem;color:var(--mut);font-size:.72rem;border-top:1px solid var(--bdr)">${row.unit||''}</td>
-    </tr>`;
-  });
-  html += '</table>';
-  el.innerHTML = html;
-}
-
-function renderCommentary(elId, sections){
-  const el = document.getElementById(elId);
-  if(!sections||!sections.length){
-    el.innerHTML='<div style="color:var(--mut);font-size:.8rem">No commentary available for this filing.</div>';
-    return;
-  }
-  el.innerHTML = sections.map((s,i)=>`
-    <div style="border:1px solid var(--bdr);border-radius:8px;margin-bottom:.65rem;overflow:hidden">
-      <div onclick="toggleComm(${i})" style="padding:.7rem 1rem;display:flex;justify-content:space-between;align-items:center;cursor:pointer;background:var(--sur2)">
-        <div style="font-size:.82rem;font-weight:600">${s.title}</div>
-        <span id="comm-icon-${i}" style="color:var(--mut);font-size:.9rem">▼</span>
-      </div>
-      <div id="comm-body-${i}" style="display:none;padding:.85rem 1rem;font-size:.78rem;line-height:1.75;color:var(--txt);max-height:400px;overflow-y:auto;white-space:pre-wrap">${s.text}</div>
-    </div>`).join('');
-}
-
-function toggleComm(i){
-  const body = document.getElementById('comm-body-'+i);
-  const icon = document.getElementById('comm-icon-'+i);
-  const open = body.style.display==='none';
-  body.style.display = open?'block':'none';
-  icon.textContent   = open?'▲':'▼';
-}
-
-</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
 <style>
 :root{--bg:#F8FAFC;--sur:#fff;--sur2:#F1F5F9;--bdr:#E2E8F0;--bdr2:#CBD5E1;--txt:#0F172A;--mut:#64748B;--acc:#2563EB;--acl:#EFF6FF;--grn:#16A34A;--gnl:#F0FDF4;--red:#DC2626;--rdl:#FEF2F2;--shd:0 1px 3px rgba(0,0,0,.08);--r:10px;--f:'Inter',sans-serif}
@@ -1270,6 +1077,197 @@ tr:hover td{background:var(--sur2)}
 </div>
 
 <script>
+// ══════════════════════════════════════════════════════
+// FINANCIALS — Calcbench integration
+// ══════════════════════════════════════════════════════
+let cbData = null; // full response from server
+
+function showFinTab(tab, btn){
+  document.querySelectorAll('.cb-tab').forEach(t=>t.style.display='none');
+  document.querySelectorAll('#cb-tabs .nb').forEach(b=>b.classList.remove('active'));
+  document.getElementById('cb-tab-'+tab).style.display='block';
+  btn.classList.add('active');
+}
+
+async function runFinancials(){
+  const btn    = document.getElementById('cb-run');
+  const errEl  = document.getElementById('cb-err');
+  const sw     = document.getElementById('cb-sw');
+  const resEl  = document.getElementById('cb-res');
+  const email  = (document.getElementById('cb-email').value||'').trim();
+  const pass   = document.getElementById('cb-pass').value||'';
+  const ticker = (document.getElementById('cb-ticker').value||'').trim().toUpperCase();
+
+  // Reset state
+  errEl.style.display='none'; errEl.textContent='';
+  errEl.style.background=''; errEl.style.borderColor=''; errEl.style.color='';
+
+  if(!email){ errEl.textContent='⚠ Enter your Calcbench email.'; errEl.style.display='block'; return; }
+  if(!pass){  errEl.textContent='⚠ Enter your Calcbench password.'; errEl.style.display='block'; return; }
+  if(!ticker){errEl.textContent='⚠ Enter a ticker symbol.'; errEl.style.display='block'; return; }
+
+  resEl.style.display='none';
+  sw.style.display='flex';
+  btn.disabled=true; btn.textContent='Fetching…';
+
+  try{
+    console.log('[Financials] Fetching', ticker, 'for', email);
+    const r = await fetch('/financials/fetch', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({email, password:pass, ticker})
+    });
+    console.log('[Financials] HTTP status:', r.status);
+
+    // Handle non-JSON responses gracefully
+    const text = await r.text();
+    console.log('[Financials] Raw response:', text.slice(0,200));
+    let data;
+    try { data = JSON.parse(text); }
+    catch(pe){ throw new Error('Server returned unexpected response (status '+r.status+'). Check Railway logs.'); }
+
+    if(data.error) throw new Error(data.error);
+    cbData = data;
+    renderFinancials(data);
+    sw.style.display='none';
+    resEl.style.display='block';
+  } catch(e){
+    sw.style.display='none';
+    errEl.textContent='⚠ '+e.message;
+    errEl.style.display='block';
+    console.error('[Financials] Error:', e);
+  } finally {
+    btn.disabled=false; btn.textContent='▶ Fetch';
+  }
+}
+
+async function testCbConnection(){
+  const email  = (document.getElementById('cb-email').value||'').trim();
+  const pass   = document.getElementById('cb-pass').value||'';
+  const errEl  = document.getElementById('cb-err');
+  errEl.style.display='none'; errEl.style.background=''; errEl.style.borderColor=''; errEl.style.color='';
+  if(!email||!pass){ errEl.textContent='⚠ Enter email and password first.'; errEl.style.display='block'; return; }
+  const btn = event.target;
+  btn.textContent='Testing…'; btn.disabled=true;
+  try{
+    const r = await fetch('/financials/test',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({email,password:pass})});
+    const text = await r.text();
+    let d; try{d=JSON.parse(text);}catch(e){throw new Error('Server error ('+r.status+')');}
+    if(d.ok){
+      errEl.textContent='✅ Connected successfully as '+email;
+      errEl.style.cssText='display:block;background:#F0FDF4;border-color:#BBF7D0;color:#16A34A;border:1px solid #BBF7D0;border-radius:6px;padding:.7rem .85rem;font-size:.78rem;margin-top:.6rem';
+    } else {
+      errEl.textContent='⚠ '+(d.error||'Connection failed');
+      errEl.style.display='block';
+    }
+  } catch(e){
+    errEl.textContent='⚠ '+e.message;
+    errEl.style.display='block';
+  }
+  finally{ btn.textContent='Test Connection'; btn.disabled=false; }
+}
+
+function switchFiling(){
+  if(!cbData) return;
+  const sel = document.getElementById('cb-filing-sel').value;
+  const filing = cbData.filings.find(f=>f.id===sel);
+  if(filing) renderFilingData(filing);
+}
+
+function renderFinancials(data){
+  document.getElementById('cb-company-name').textContent = data.companyName || data.ticker;
+  document.getElementById('cb-company-ticker').textContent = data.ticker;
+  document.getElementById('cb-filing-date').textContent = data.filings?.[0]?.filedOn || '—';
+  const srcLink = document.getElementById('cb-source-link');
+  srcLink.href = `https://www.calcbench.com/financial_statements/${data.ticker}`;
+
+  // Populate filing selector
+  const sel = document.getElementById('cb-filing-sel');
+  sel.innerHTML = (data.filings||[]).map(f=>
+    `<option value="${f.id}">${f.type} — ${f.period} (filed ${f.filedOn})</option>`
+  ).join('');
+
+  // Render first filing
+  if(data.filings?.[0]) renderFilingData(data.filings[0]);
+}
+
+function renderFilingData(filing){
+  document.getElementById('cb-income-title').textContent  = `Income Statement — ${filing.period}`;
+  document.getElementById('cb-balance-title').textContent  = `Balance Sheet — ${filing.period}`;
+  document.getElementById('cb-cashflow-title').textContent = `Cash Flow Statement — ${filing.period}`;
+  document.getElementById('cb-filing-date').textContent    = `${filing.type} · ${filing.period} · filed ${filing.filedOn}`;
+
+  renderFinTable('cb-income-body',  filing.income);
+  renderFinTable('cb-balance-body', filing.balance);
+  renderFinTable('cb-cashflow-body',filing.cashflow);
+  renderCommentary('cb-commentary-body', filing.commentary);
+}
+
+function fmtNum(v){
+  if(v==null||v==='') return '—';
+  const n = parseFloat(v);
+  if(isNaN(n)) return v;
+  const abs = Math.abs(n);
+  const sign = n<0?'(':'';
+  const end  = n<0?')':'';
+  if(abs>=1e9) return sign+'$'+(abs/1e9).toFixed(2)+'B'+end;
+  if(abs>=1e6) return sign+'$'+(abs/1e6).toFixed(1)+'M'+end;
+  if(abs>=1e3) return sign+'$'+(abs/1e3).toFixed(0)+'K'+end;
+  return sign+'$'+abs.toLocaleString()+end;
+}
+
+function renderFinTable(elId, rows){
+  const el = document.getElementById(elId);
+  if(!rows||!rows.length){ el.innerHTML='<div style="color:var(--mut);font-size:.8rem;padding:.5rem">No data available</div>'; return; }
+  // Group by section
+  let html = '<table style="width:100%;border-collapse:collapse;font-size:.8rem">';
+  let lastSection = null;
+  rows.forEach(row=>{
+    if(row.section && row.section !== lastSection){
+      html += `<tr><td colspan="3" style="padding:.55rem .75rem .25rem;font-size:.65rem;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--mut);background:var(--sur2);border-top:2px solid var(--bdr)">${row.section}</td></tr>`;
+      lastSection = row.section;
+    }
+    const isTotal = row.isTotal;
+    const style = isTotal ? 'font-weight:700;border-top:1px solid var(--bdr2)' : '';
+    const indent = row.indent>0 ? `padding-left:${0.75+row.indent*1}rem` : 'padding-left:.75rem';
+    const val = fmtNum(row.value);
+    const cls = parseFloat(row.value)<0 ? 'neg' : '';
+    html += `<tr>
+      <td style="${indent};padding-top:.42rem;padding-bottom:.42rem;${style};border-top:1px solid var(--bdr)">${row.label}</td>
+      <td style="text-align:right;padding:.42rem .75rem;${style};border-top:1px solid var(--bdr)" class="${cls}">${val}</td>
+      <td style="text-align:right;padding:.42rem .75rem;color:var(--mut);font-size:.72rem;border-top:1px solid var(--bdr)">${row.unit||''}</td>
+    </tr>`;
+  });
+  html += '</table>';
+  el.innerHTML = html;
+}
+
+function renderCommentary(elId, sections){
+  const el = document.getElementById(elId);
+  if(!sections||!sections.length){
+    el.innerHTML='<div style="color:var(--mut);font-size:.8rem">No commentary available for this filing.</div>';
+    return;
+  }
+  el.innerHTML = sections.map((s,i)=>`
+    <div style="border:1px solid var(--bdr);border-radius:8px;margin-bottom:.65rem;overflow:hidden">
+      <div onclick="toggleComm(${i})" style="padding:.7rem 1rem;display:flex;justify-content:space-between;align-items:center;cursor:pointer;background:var(--sur2)">
+        <div style="font-size:.82rem;font-weight:600">${s.title}</div>
+        <span id="comm-icon-${i}" style="color:var(--mut);font-size:.9rem">▼</span>
+      </div>
+      <div id="comm-body-${i}" style="display:none;padding:.85rem 1rem;font-size:.78rem;line-height:1.75;color:var(--txt);max-height:400px;overflow-y:auto;white-space:pre-wrap">${s.text}</div>
+    </div>`).join('');
+}
+
+function toggleComm(i){
+  const body = document.getElementById('comm-body-'+i);
+  const icon = document.getElementById('comm-icon-'+i);
+  const open = body.style.display==='none';
+  body.style.display = open?'block':'none';
+  icon.textContent   = open?'▲':'▼';
+}
+
 // ══════════════════════════════════════════════════════
 // CHART VIEW ENGINE — resample + range filter for all line charts
 // ══════════════════════════════════════════════════════
