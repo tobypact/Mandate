@@ -339,7 +339,108 @@ HTML = """<!DOCTYPE html>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>Investment Mandate & Capital Deployment</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js">
+// ══════════════════════════════════════════════════════
+// CHART VIEW ENGINE — resample + range filter for all line charts
+// ══════════════════════════════════════════════════════
+const cvState = {};  // { chartKey: { view:'D'|'M'|'Y'|'R', from, to } }
+
+// Registry: chartKey → { chartRef getter, rawData getter, rebuildFn }
+const cvRegistry = {};
+
+function cvRegister(key, getChart, getRaw, rebuild){
+  cvRegistry[key] = { getChart, getRaw, rebuild };
+  cvState[key] = { view:'D', from:null, to:null };
+}
+
+// Resample daily data to monthly or yearly last-value
+function resample(labels, datasets, freq){
+  if(freq==='D') return { labels, datasets };
+  const buckets = {};
+  labels.forEach((d,i)=>{
+    const key = freq==='M' ? d.slice(0,7) : d.slice(0,4);
+    buckets[key] = { label:d, i };  // last point in bucket wins
+  });
+  const keys  = Object.keys(buckets).sort();
+  const newLabels = keys.map(k=>buckets[k].label);
+  const newDatasets = datasets.map(ds=>({
+    ...ds,
+    data: keys.map(k=>{
+      const v = ds.data[buckets[k].i];
+      return v;
+    })
+  }));
+  return { labels:newLabels, datasets:newDatasets };
+}
+
+// Filter by date range
+function filterRange(labels, datasets, from, to){
+  if(!from && !to) return { labels, datasets };
+  const idxs = labels.reduce((acc,d,i)=>{
+    if((!from||d>=from) && (!to||d<=to)) acc.push(i);
+    return acc;
+  }, []);
+  return {
+    labels: idxs.map(i=>labels[i]),
+    datasets: datasets.map(ds=>({ ...ds, data:idxs.map(i=>ds.data[i]) }))
+  };
+}
+
+function applyView(key){
+  const reg = cvRegistry[key];
+  if(!reg) return;
+  const raw  = reg.getRaw();
+  if(!raw) return;
+  const st   = cvState[key];
+  let { labels, datasets } = raw;
+  // Apply date range filter first
+  if(st.view==='R')
+    ({ labels, datasets } = filterRange(labels, datasets, st.from, st.to));
+  else
+    ({ labels, datasets } = resample(labels, datasets, st.view));
+  // Update existing chart (faster than destroy/rebuild)
+  const chart = reg.getChart();
+  if(!chart) { reg.rebuild(labels, datasets); return; }
+  chart.data.labels   = labels;
+  chart.data.datasets.forEach((ds,i)=>{ if(datasets[i]) ds.data = datasets[i].data; });
+  chart.update('none');
+}
+
+function setCvView(key, btn, freq){
+  // Update active button style
+  const wrap = btn.closest('.cv-toolbar');
+  if(wrap) wrap.querySelectorAll('.cv-btn').forEach(b=>b.classList.remove('cv-active'));
+  btn.classList.add('cv-active');
+  // Hide range picker if not range mode
+  const rangeWrap = document.getElementById(key+'-range-wrap');
+  if(rangeWrap) rangeWrap.classList.remove('open');
+  cvState[key] = { ...cvState[key], view:freq };
+  applyView(key);
+}
+
+function toggleCvRange(key){
+  const rangeWrap = document.getElementById(key+'-range-wrap');
+  if(!rangeWrap) return;
+  rangeWrap.classList.toggle('open');
+}
+
+function applyCvRange(key){
+  const from = document.getElementById(key+'-range-from')?.value || null;
+  const to   = document.getElementById(key+'-range-to')?.value   || null;
+  cvState[key] = { view:'R', from, to };
+  // Mark range button active
+  const rangeWrap = document.getElementById(key+'-range-wrap');
+  if(rangeWrap){
+    const toolbar = rangeWrap.previousElementSibling;
+    if(toolbar) toolbar.querySelectorAll('.cv-btn').forEach(b=>b.classList.remove('cv-active'));
+    // mark the range btn
+    const btns = toolbar ? toolbar.querySelectorAll('.cv-btn') : [];
+    if(btns.length) btns[btns.length-1].classList.add('cv-active');
+  }
+  applyView(key);
+}
+
+</script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
 <style>
 :root{--bg:#F8FAFC;--sur:#fff;--sur2:#F1F5F9;--bdr:#E2E8F0;--bdr2:#CBD5E1;--txt:#0F172A;--mut:#64748B;--acc:#2563EB;--acl:#EFF6FF;--grn:#16A34A;--gnl:#F0FDF4;--red:#DC2626;--rdl:#FEF2F2;--shd:0 1px 3px rgba(0,0,0,.08);--r:10px;--f:'Inter',sans-serif}
@@ -373,6 +474,16 @@ textarea{resize:vertical;min-height:68px}
 .cc{background:var(--sur);border:1px solid var(--bdr);border-radius:var(--r);padding:1rem;margin-bottom:1rem;box-shadow:var(--shd)}
 .ct{font-size:.65rem;font-weight:600;letter-spacing:.5px;text-transform:uppercase;color:var(--mut);margin-bottom:.75rem}
 canvas{max-height:240px}
+.cv-wrap{position:relative}
+.cv-toolbar{display:flex;align-items:center;gap:.35rem;flex-wrap:wrap;margin-bottom:.65rem}
+.cv-toolbar .ct{margin-bottom:0;flex:1;min-width:0}
+.cv-btn{padding:.22rem .55rem;font-size:.68rem;font-weight:600;border:1px solid var(--bdr2);border-radius:5px;background:var(--sur2);color:var(--mut);cursor:pointer;font-family:var(--f);white-space:nowrap}
+.cv-btn:hover{background:var(--acl);border-color:var(--acc);color:var(--acc)}
+.cv-btn.cv-active{background:var(--acc);border-color:var(--acc);color:#fff}
+.cv-range{display:none;align-items:center;gap:.3rem;margin-top:.4rem;flex-wrap:wrap}
+.cv-range.open{display:flex}
+.cv-range input[type=date]{width:auto;min-width:0;font-size:.72rem;padding:.28rem .4rem;border-radius:5px}
+.cv-range button{padding:.28rem .6rem;font-size:.7rem;font-weight:600;border:1px solid var(--acc);border-radius:5px;background:var(--acl);color:var(--acc);cursor:pointer;font-family:var(--f)}
 .tc{background:var(--sur);border:1px solid var(--bdr);border-radius:var(--r);overflow:hidden;box-shadow:var(--shd);margin-bottom:1rem}
 .th{padding:.65rem 1rem;border-bottom:1px solid var(--bdr);font-size:.65rem;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--mut);display:flex;justify-content:space-between;align-items:center}
 .bge{background:var(--acl);color:var(--acc);padding:.15rem .5rem;border-radius:20px;font-size:.65rem;font-weight:600}
@@ -534,7 +645,19 @@ tr:hover td{background:var(--sur2)}
           <table><thead><tr><th>Metric</th><th id="cmp-s" style="text-align:right">Strategy</th><th id="cmp-b" style="text-align:right">Benchmark</th><th style="text-align:right">Edge</th></tr></thead><tbody id="bt-cmp"></tbody></table>
         </div>
       </div>
-      <div class="cc"><div class="ct" id="bt-ctitle">Equity Curve</div><canvas id="bt-chart"></canvas></div>
+      <div class="cc"><div class="cv-toolbar"><div class="ct" id="bt-ctitle">Equity Curve</div><div style="display:flex;gap:.25rem;align-items:center">
+  <button class="cv-btn cv-active" onclick="setCvView('bt',this,'D')">D</button>
+  <button class="cv-btn" onclick="setCvView('bt',this,'M')">M</button>
+  <button class="cv-btn" onclick="setCvView('bt',this,'Y')">Y</button>
+  <button class="cv-btn" id="bt-range-btn" onclick="toggleCvRange('bt')">📅 Range</button>
+</div></div>
+<div class="cv-range" id="bt-range-wrap">
+  <input type="date" id="bt-range-from" placeholder="From"/>
+  <span style="font-size:.72rem;color:var(--mut)">to</span>
+  <input type="date" id="bt-range-to" placeholder="To"/>
+  <button onclick="applyCvRange('bt')">Apply</button>
+</div>
+<canvas id="bt-chart"></canvas></div>
       <div class="tc">
         <div class="th">Trade Log <span class="bge" id="bt-tc">0 trades</span></div>
         <div style="overflow-x:auto"><table><thead><tr><th>Entry</th><th>Exit</th><th>Entry $</th><th>Exit $</th><th>Return</th><th>P&L (USD)</th><th>Reason</th></tr></thead><tbody id="bt-trades"></tbody></table></div>
@@ -625,13 +748,57 @@ tr:hover td{background:var(--sur2)}
         <div id="pair-cd-text"></div>
       </div>
 
-      <div class="cc"><div class="ct">Normalised Price (rebased to 100) — <span id="pair-ct-sub" style="font-weight:400">price movement</span></div><canvas id="pair-chart"></canvas></div>
+      <div class="cc"><div class="cv-toolbar"><div class="ct">Normalised Price (rebased to 100) — <span id="pair-ct-sub" style="font-weight:400">price movement</span></div><div style="display:flex;gap:.25rem">
+  <button class="cv-btn cv-active" onclick="setCvView('pair-norm',this,'D')">D</button>
+  <button class="cv-btn" onclick="setCvView('pair-norm',this,'M')">M</button>
+  <button class="cv-btn" onclick="setCvView('pair-norm',this,'Y')">Y</button>
+  <button class="cv-btn" onclick="toggleCvRange('pair-norm')">📅 Range</button>
+</div></div>
+<div class="cv-range" id="pair-norm-range-wrap">
+  <input type="date" id="pair-norm-range-from"/><span style="font-size:.72rem;color:var(--mut)">to</span>
+  <input type="date" id="pair-norm-range-to"/>
+  <button onclick="applyCvRange('pair-norm')">Apply</button>
+</div>
+<canvas id="pair-chart"></canvas></div>
 
-      <div class="cc"><div class="ct">Rolling Correlation (<span id="pair-win-lbl">60</span>-day window) — convergence/divergence over time</div><canvas id="rolling-corr-chart"></canvas></div>
+      <div class="cc"><div class="cv-toolbar"><div class="ct">Rolling Correlation (<span id="pair-win-lbl">60</span>-day window) — convergence/divergence over time</div><div style="display:flex;gap:.25rem">
+  <button class="cv-btn cv-active" onclick="setCvView('pair-corr',this,'D')">D</button>
+  <button class="cv-btn" onclick="setCvView('pair-corr',this,'M')">M</button>
+  <button class="cv-btn" onclick="setCvView('pair-corr',this,'Y')">Y</button>
+  <button class="cv-btn" onclick="toggleCvRange('pair-corr')">📅 Range</button>
+</div></div>
+<div class="cv-range" id="pair-corr-range-wrap">
+  <input type="date" id="pair-corr-range-from"/><span style="font-size:.72rem;color:var(--mut)">to</span>
+  <input type="date" id="pair-corr-range-to"/>
+  <button onclick="applyCvRange('pair-corr')">Apply</button>
+</div>
+<canvas id="rolling-corr-chart"></canvas></div>
 
-      <div class="cc"><div class="ct">Price Ratio (Ticker 1 ÷ Ticker 2) — spread</div><canvas id="ratio-chart"></canvas></div>
+      <div class="cc"><div class="cv-toolbar"><div class="ct">Price Ratio (Ticker 1 ÷ Ticker 2) — spread</div><div style="display:flex;gap:.25rem">
+  <button class="cv-btn cv-active" onclick="setCvView('pair-ratio',this,'D')">D</button>
+  <button class="cv-btn" onclick="setCvView('pair-ratio',this,'M')">M</button>
+  <button class="cv-btn" onclick="setCvView('pair-ratio',this,'Y')">Y</button>
+  <button class="cv-btn" onclick="toggleCvRange('pair-ratio')">📅 Range</button>
+</div></div>
+<div class="cv-range" id="pair-ratio-range-wrap">
+  <input type="date" id="pair-ratio-range-from"/><span style="font-size:.72rem;color:var(--mut)">to</span>
+  <input type="date" id="pair-ratio-range-to"/>
+  <button onclick="applyCvRange('pair-ratio')">Apply</button>
+</div>
+<canvas id="ratio-chart"></canvas></div>
 
-      <div class="cc"><div class="ct">Market Context — S&amp;P 500 · 10Y Bond · Gold<span id="pair-ctx-lbl"></span> (normalised to 100)</div><canvas id="ctx-chart"></canvas></div>
+      <div class="cc"><div class="cv-toolbar"><div class="ct">Market Context — S&amp;P 500 · 10Y Bond · Gold<span id="pair-ctx-lbl"></span></div><div style="display:flex;gap:.25rem">
+  <button class="cv-btn cv-active" onclick="setCvView('pair-ctx',this,'D')">D</button>
+  <button class="cv-btn" onclick="setCvView('pair-ctx',this,'M')">M</button>
+  <button class="cv-btn" onclick="setCvView('pair-ctx',this,'Y')">Y</button>
+  <button class="cv-btn" onclick="toggleCvRange('pair-ctx')">📅 Range</button>
+</div></div>
+<div class="cv-range" id="pair-ctx-range-wrap">
+  <input type="date" id="pair-ctx-range-from"/><span style="font-size:.72rem;color:var(--mut)">to</span>
+  <input type="date" id="pair-ctx-range-to"/>
+  <button onclick="applyCvRange('pair-ctx')">Apply</button>
+</div>
+<canvas id="ctx-chart"></canvas></div>
 
       <div class="card" style="margin-bottom:1rem">
         <div class="ch">Market Regime Interpretation</div>
@@ -693,7 +860,18 @@ tr:hover td{background:var(--sur2)}
         <div class="cc" style="margin:0"><div class="ct">Asset Allocation</div><canvas id="pf-alloc" style="max-height:200px"></canvas></div>
         <div class="cc" style="margin:0"><div class="ct">Sector Allocation</div><canvas id="pf-sector" style="max-height:200px"></canvas></div>
       </div>
-      <div class="cc" id="pf-bm-wrap" style="display:none"><div class="ct">Portfolio vs Benchmark</div><canvas id="pf-bm-chart"></canvas></div>
+      <div class="cc" id="pf-bm-wrap" style="display:none"><div class="cv-toolbar"><div class="ct">Portfolio vs Benchmark</div><div style="display:flex;gap:.25rem">
+  <button class="cv-btn cv-active" onclick="setCvView('pf-bm',this,'D')">D</button>
+  <button class="cv-btn" onclick="setCvView('pf-bm',this,'M')">M</button>
+  <button class="cv-btn" onclick="setCvView('pf-bm',this,'Y')">Y</button>
+  <button class="cv-btn" onclick="toggleCvRange('pf-bm')">📅 Range</button>
+</div></div>
+<div class="cv-range" id="pf-bm-range-wrap">
+  <input type="date" id="pf-bm-range-from"/><span style="font-size:.72rem;color:var(--mut)">to</span>
+  <input type="date" id="pf-bm-range-to"/>
+  <button onclick="applyCvRange('pf-bm')">Apply</button>
+</div>
+<canvas id="pf-bm-chart"></canvas></div>
       <div class="card" style="margin-bottom:1rem"><div class="ch">Correlation Matrix</div><div class="cb" style="overflow-x:auto"><div id="pf-corr"></div></div></div>
       <div class="card" id="pf-ir-card" style="display:none;margin-bottom:1rem">
         <div class="ch">Information Ratio &amp; Appraisal Ratio</div>
@@ -874,6 +1052,17 @@ function renderBt(data,params){
     {label:'💰 Cash (Ready to Deploy)',data:cashData,borderColor:'#94A3B8',backgroundColor:'rgba(148,163,184,0.05)',borderWidth:1.5,pointRadius:0,tension:0,fill:true,spanGaps:true},
     {label:bmlbl,data:data.bmEquity.map(e=>e.value),borderColor:'#F59E0B',borderWidth:1.5,pointRadius:0,borderDash:[5,4],fill:false,tension:0},
   ]},options:{...chartOpts('$'),plugins:{...chartOpts('$').plugins,legend:{labels:{color:'#64748B',font:{family:'Inter',size:11},usePointStyle:true}}}}});
+  // Register with ChartView engine
+  cvRegister('bt',
+    ()=>btChart,
+    ()=>({labels:eqLabels, datasets:[
+      {label:'📍 Holding Period',data:holdingData,borderColor:'#2563EB',backgroundColor:'rgba(37,99,235,0.08)',borderWidth:2.5,pointRadius:0,tension:0,fill:true,spanGaps:true},
+      {label:'💰 Cash (Ready to Deploy)',data:cashData,borderColor:'#94A3B8',backgroundColor:'rgba(148,163,184,0.05)',borderWidth:1.5,pointRadius:0,tension:0,fill:true,spanGaps:true},
+      {label:bmlbl,data:data.bmEquity.map(e=>e.value),borderColor:'#F59E0B',borderWidth:1.5,pointRadius:0,borderDash:[5,4],fill:false,tension:0},
+    ]}),
+    (lbl,ds)=>{ btChart.data.labels=lbl; ds.forEach((d,i)=>{if(btChart.data.datasets[i])btChart.data.datasets[i].data=d.data;}); btChart.update(); }
+  );
+  cvState['bt']={view:'D',from:null,to:null};
   document.getElementById('bt-tc').textContent=data.trades.length+' trades';
   document.getElementById('bt-trades').innerHTML=data.trades.map(t=>`<tr>
     <td>${t.entryDate}</td><td>${t.exitDate}</td><td>$${t.entryPrice}</td><td>$${t.exitPrice}</td>
@@ -1014,6 +1203,12 @@ async function runPair(){
       {label:t1,data:data.price1,borderColor:'#2563EB',borderWidth:2,pointRadius:0,tension:.1,fill:false},
       {label:t2,data:data.price2,borderColor:'#F59E0B',borderWidth:2,pointRadius:0,tension:.1,fill:false}
     ]},options:chartOpts('')});
+    cvRegister('pair-norm',()=>pairChart,
+      ()=>({labels:data.dates,datasets:[
+        {label:t1,data:data.price1,borderColor:'#2563EB',borderWidth:2,pointRadius:0,tension:.1,fill:false},
+        {label:t2,data:data.price2,borderColor:'#F59E0B',borderWidth:2,pointRadius:0,tension:.1,fill:false}
+      ]}), (lbl,ds)=>{pairChart.data.labels=lbl;ds.forEach((d,i)=>{if(pairChart.data.datasets[i])pairChart.data.datasets[i].data=d.data;});pairChart.update();});
+    cvState['pair-norm']={view:'D',from:null,to:null};
 
     // ── Rolling correlation chart ──
     if(rollingCorrChart)rollingCorrChart.destroy();
@@ -1021,12 +1216,22 @@ async function runPair(){
       {label:`${window_days}-day Rolling Correlation`,data:data.rollingCorr,borderColor:'#7C3AED',borderWidth:2,pointRadius:0,tension:.3,fill:false,spanGaps:true},
       {label:'Zero line',data:data.dates.map(()=>0),borderColor:'#E2E8F0',borderWidth:1,pointRadius:0,borderDash:[4,4],fill:false},
     ]},options:{...chartOpts(''),scales:{...chartOpts('').scales,y:{...chartOpts('').scales.y,min:-1,max:1,ticks:{...chartOpts('').scales.y.ticks,callback:v=>v.toFixed(1)}}}}});
+    cvRegister('pair-corr',()=>rollingCorrChart,
+      ()=>({labels:data.dates,datasets:[
+        {label:`${window_days}-day Rolling Correlation`,data:data.rollingCorr,borderColor:'#7C3AED',borderWidth:2,pointRadius:0,tension:.3,fill:false,spanGaps:true},
+        {label:'Zero line',data:data.dates.map(()=>0),borderColor:'#E2E8F0',borderWidth:1,pointRadius:0,borderDash:[4,4],fill:false}
+      ]}), (lbl,ds)=>{rollingCorrChart.data.labels=lbl;ds.forEach((d,i)=>{if(rollingCorrChart.data.datasets[i])rollingCorrChart.data.datasets[i].data=d.data;});rollingCorrChart.update();});
+    cvState['pair-corr']={view:'D',from:null,to:null};
 
     // ── Price ratio chart ──
     if(ratioChart)ratioChart.destroy();
     ratioChart=new Chart(document.getElementById('ratio-chart'),{type:'line',data:{labels:data.dates,datasets:[
       {label:t1+'/'+t2+' ratio',data:data.ratio,borderColor:'#0891B2',borderWidth:1.5,pointRadius:0,tension:.1,fill:'origin',backgroundColor:'rgba(8,145,178,.05)'}
     ]},options:chartOpts('')});
+    cvRegister('pair-ratio',()=>ratioChart,
+      ()=>({labels:data.dates,datasets:[{label:t1+'/'+t2+' ratio',data:data.ratio,borderColor:'#0891B2',borderWidth:1.5,pointRadius:0,tension:.1,fill:'origin',backgroundColor:'rgba(8,145,178,.05)'}]}),
+      (lbl,ds)=>{ratioChart.data.labels=lbl;ds.forEach((d,i)=>{if(ratioChart.data.datasets[i])ratioChart.data.datasets[i].data=d.data;});ratioChart.update();});
+    cvState['pair-ratio']={view:'D',from:null,to:null};
 
     // ── Context chart ──
     document.getElementById('pair-ctx-lbl').textContent=data.ctxCustomTicker?' · '+data.ctxCustomTicker:'';
@@ -1040,6 +1245,10 @@ async function runPair(){
     }
     if(ctxChart)ctxChart.destroy();
     ctxChart=new Chart(document.getElementById('ctx-chart'),{type:'line',data:{labels:data.dates,datasets:ctxDatasets},options:chartOpts('')});
+    cvRegister('pair-ctx',()=>ctxChart,
+      ()=>({labels:data.dates,datasets:ctxDatasets}),
+      (lbl,ds)=>{ctxChart.data.labels=lbl;ds.forEach((d,i)=>{if(ctxChart.data.datasets[i])ctxChart.data.datasets[i].data=d.data;});ctxChart.update();});
+    cvState['pair-ctx']={view:'D',from:null,to:null};
 
     // ── Regime interpretation ──
     const spy_ret=data.ctxReturns.spy, tlt_ret=data.ctxReturns.tlt, gld_ret=data.ctxReturns.gld;
@@ -1153,6 +1362,10 @@ function renderPf(d){
     document.getElementById('pf-bm-wrap').style.display='block';
     if(pfBmChart)pfBmChart.destroy();
     pfBmChart=new Chart(document.getElementById('pf-bm-chart'),{type:'line',data:{labels:d.benchmark.dates,datasets:[{label:'Portfolio',data:d.benchmark.portCurve,borderColor:'#2563EB',borderWidth:2,pointRadius:0,tension:.1,fill:false},{label:d.benchmark.ticker,data:d.benchmark.bmCurve,borderColor:'#F59E0B',borderWidth:1.5,pointRadius:0,borderDash:[5,4],fill:false}]},options:chartOpts('')});
+    cvRegister('pf-bm',()=>pfBmChart,
+      ()=>({labels:d.benchmark.dates,datasets:[{label:'Portfolio',data:d.benchmark.portCurve,borderColor:'#2563EB',borderWidth:2,pointRadius:0,tension:.1,fill:false},{label:d.benchmark.ticker,data:d.benchmark.bmCurve,borderColor:'#F59E0B',borderWidth:1.5,pointRadius:0,borderDash:[5,4],fill:false}]}),
+      (lbl,ds)=>{pfBmChart.data.labels=lbl;ds.forEach((dd,i)=>{if(pfBmChart.data.datasets[i])pfBmChart.data.datasets[i].data=dd.data;});pfBmChart.update();});
+    cvState['pf-bm']={view:'D',from:null,to:null};
   }
   const tickers=d.corr.tickers,matrix=d.corr.matrix;
   let ch=`<table class="ctb"><thead><tr><th></th>${tickers.map(t=>`<th>${t}</th>`).join('')}</tr></thead><tbody>`;
