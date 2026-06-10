@@ -1251,7 +1251,7 @@ def backtest():
     d = request.json
     try:
         r, e = run_backtest(
-            ticker=d.get("ticker","QQQ").upper().strip(),
+            ticker=(d.get("ticker") or "QQQ").upper().strip(),
             start=d.get("start","2000-01-01"), end=d.get("end","2020-01-01"),
             capital=float(d.get("capital",10000)),
             rsi_buy=float(d["rsiBuy"]) if d.get("rsiBuy") is not None else None,
@@ -1262,7 +1262,7 @@ def backtest():
             buy_metrics=d.get("buyMetrics",{}), sell_metrics=d.get("sellMetrics",{}),
             buy_logic=d.get("andorLogic",{}).get("buyLogic","or"),
             sell_logic=d.get("andorLogic",{}).get("sellLogic","or"),
-            benchmark=d.get("benchmark","SPY").upper().strip(),
+            benchmark=(d.get("benchmark") or "SPY").upper().strip(),
             bm_mode=d.get("bmMode","hold"))
         if e: return jsonify({"error":e}), 400
         return jsonify(r)
@@ -1284,10 +1284,10 @@ def valuation():
 def pair():
     d = request.json
     try:
-        r, e = run_pair(d.get("ticker1","").upper(), d.get("ticker2","").upper(),
+        r, e = run_pair((d.get("ticker1") or "").upper(), (d.get("ticker2") or "").upper(),
                         d.get("start","2010-01-01"), d.get("end","2024-01-01"),
                         window=int(d.get("window",60)),
-                        custom=d.get("custom","").upper().strip() or None)
+                        custom=(d.get("custom") or "").upper().strip() or None)
         if e: return jsonify({"error":e}), 400
         return jsonify(r)
     except Exception as ex:
@@ -1322,7 +1322,7 @@ def portfolio():
         costs     = {h["ticker"].upper().strip():float(h["avgCost"]) for h in holdings}
         pur_dates = {h["ticker"].upper().strip():h.get("purchaseDate") for h in holdings}
         days      = int(d.get("lookbackDays",365))
-        benchmark = d.get("benchmark","").upper().strip()
+        benchmark = (d.get("benchmark") or "").upper().strip()
         today     = pd.Timestamp.today()
 
         raw = yf.download(tickers, period=f"{days}d", progress=False, auto_adjust=True)
