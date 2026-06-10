@@ -414,60 +414,82 @@ function showFinTab(tab, btn){
 }
 
 async function runFinancials(){
-  const btn = document.getElementById('cb-run');
-  const email  = document.getElementById('cb-email').value.trim();
-  const pass   = document.getElementById('cb-pass').value;
-  const ticker = document.getElementById('cb-ticker').value.trim().toUpperCase();
-  showErr('cb-err','');
-  if(!email||!pass||!ticker){ showErr('cb-err','Enter your Calcbench email, password and a ticker.'); return; }
-  document.getElementById('cb-res').style.display='none';
-  document.getElementById('cb-sw').style.display='flex';
+  const btn    = document.getElementById('cb-run');
+  const errEl  = document.getElementById('cb-err');
+  const sw     = document.getElementById('cb-sw');
+  const resEl  = document.getElementById('cb-res');
+  const email  = (document.getElementById('cb-email').value||'').trim();
+  const pass   = document.getElementById('cb-pass').value||'';
+  const ticker = (document.getElementById('cb-ticker').value||'').trim().toUpperCase();
+
+  // Reset state
+  errEl.style.display='none'; errEl.textContent='';
+  errEl.style.background=''; errEl.style.borderColor=''; errEl.style.color='';
+
+  if(!email){ errEl.textContent='⚠ Enter your Calcbench email.'; errEl.style.display='block'; return; }
+  if(!pass){  errEl.textContent='⚠ Enter your Calcbench password.'; errEl.style.display='block'; return; }
+  if(!ticker){errEl.textContent='⚠ Enter a ticker symbol.'; errEl.style.display='block'; return; }
+
+  resEl.style.display='none';
+  sw.style.display='flex';
   btn.disabled=true; btn.textContent='Fetching…';
+
   try{
-    const r = await fetch('/financials/fetch', {method:'POST',
+    console.log('[Financials] Fetching', ticker, 'for', email);
+    const r = await fetch('/financials/fetch', {
+      method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({email, password:pass, ticker})});
-    const data = await r.json();
+      body:JSON.stringify({email, password:pass, ticker})
+    });
+    console.log('[Financials] HTTP status:', r.status);
+
+    // Handle non-JSON responses gracefully
+    const text = await r.text();
+    console.log('[Financials] Raw response:', text.slice(0,200));
+    let data;
+    try { data = JSON.parse(text); }
+    catch(pe){ throw new Error('Server returned unexpected response (status '+r.status+'). Check Railway logs.'); }
+
     if(data.error) throw new Error(data.error);
     cbData = data;
     renderFinancials(data);
-    document.getElementById('cb-sw').style.display='none';
-    document.getElementById('cb-res').style.display='block';
+    sw.style.display='none';
+    resEl.style.display='block';
   } catch(e){
-    document.getElementById('cb-sw').style.display='none';
-    const errEl = document.getElementById('cb-err');
-    errEl.textContent = '⚠ ' + e.message;
-    errEl.style.display = 'block';
-    errEl.style.marginTop = '0.75rem';
-    console.error('Financials fetch error:', e);
+    sw.style.display='none';
+    errEl.textContent='⚠ '+e.message;
+    errEl.style.display='block';
+    console.error('[Financials] Error:', e);
   } finally {
     btn.disabled=false; btn.textContent='▶ Fetch';
   }
 }
 
 async function testCbConnection(){
-  const email  = document.getElementById('cb-email').value.trim();
-  const pass   = document.getElementById('cb-pass').value;
-  if(!email||!pass){ showErr('cb-err','Enter email and password first.'); return; }
-  showErr('cb-err','');
+  const email  = (document.getElementById('cb-email').value||'').trim();
+  const pass   = document.getElementById('cb-pass').value||'';
+  const errEl  = document.getElementById('cb-err');
+  errEl.style.display='none'; errEl.style.background=''; errEl.style.borderColor=''; errEl.style.color='';
+  if(!email||!pass){ errEl.textContent='⚠ Enter email and password first.'; errEl.style.display='block'; return; }
   const btn = event.target;
   btn.textContent='Testing…'; btn.disabled=true;
   try{
     const r = await fetch('/financials/test',{method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({email,password:pass})});
-    const d = await r.json();
+    const text = await r.text();
+    let d; try{d=JSON.parse(text);}catch(e){throw new Error('Server error ('+r.status+')');}
     if(d.ok){
-      const errEl = document.getElementById('cb-err');
-      errEl.textContent='✅ Connected to Calcbench as '+email;
-      errEl.style.display='block';
-      errEl.style.background='#F0FDF4';
-      errEl.style.borderColor='#BBF7D0';
-      errEl.style.color='#16A34A';
+      errEl.textContent='✅ Connected successfully as '+email;
+      errEl.style.cssText='display:block;background:#F0FDF4;border-color:#BBF7D0;color:#16A34A;border:1px solid #BBF7D0;border-radius:6px;padding:.7rem .85rem;font-size:.78rem;margin-top:.6rem';
     } else {
-      showErr('cb-err', d.error||'Connection failed');
+      errEl.textContent='⚠ '+(d.error||'Connection failed');
+      errEl.style.display='block';
     }
-  } catch(e){ showErr('cb-err', e.message); }
+  } catch(e){
+    errEl.textContent='⚠ '+e.message;
+    errEl.style.display='block';
+  }
   finally{ btn.textContent='Test Connection'; btn.disabled=false; }
 }
 
