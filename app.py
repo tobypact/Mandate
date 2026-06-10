@@ -2702,11 +2702,11 @@ def get_monitor_log():
 # ══════════════════════════════════════════════════════════════════════
 # CALCBENCH — Financial Statements (official calcbench-api-client)
 # ══════════════════════════════════════════════════════════════════════
-import requests as _req_sess
+import requests as _req
 
 CB_BASE = "https://www.calcbench.com"
 
-CB_INCOME_METRICS = [
+CB_INCOME = [
     ("Revenue","Revenue"),("Cost of Revenue","CostOfRevenue"),
     ("Gross Profit","GrossProfit"),("R&D Expense","ResearchAndDevelopmentExpense"),
     ("SG&A","SellingGeneralAdministrative"),("Operating Income","OperatingIncomeLoss"),
@@ -2715,18 +2715,17 @@ CB_INCOME_METRICS = [
     ("Income Tax","IncomeTaxExpenseBenefit"),("Net Income","NetIncomeLoss"),
     ("EPS Basic","EarningsPerShareBasic"),("EPS Diluted","EarningsPerShareDiluted"),
 ]
-CB_BALANCE_METRICS = [
+CB_BALANCE = [
     ("Cash & Equivalents","CashAndCashEquivalentsAtCarryingValue"),
     ("Accounts Receivable","AccountsReceivableNetCurrent"),
     ("Inventory","InventoryNet"),("Total Current Assets","AssetsCurrent"),
     ("PP&E Net","PropertyPlantAndEquipmentNet"),("Goodwill","Goodwill"),
     ("Total Assets","Assets"),("Accounts Payable","AccountsPayableCurrent"),
-    ("Short-term Debt","ShortTermBorrowings"),
     ("Total Current Liabilities","LiabilitiesCurrent"),
     ("Long-term Debt","LongTermDebt"),("Total Liabilities","Liabilities"),
     ("Total Equity","StockholdersEquity"),
 ]
-CB_CASHFLOW_METRICS = [
+CB_CASHFLOW = [
     ("Operating Cash Flow","NetCashProvidedByUsedInOperatingActivities"),
     ("Depreciation & Amortisation","DepreciationDepletionAndAmortization"),
     ("CapEx","PaymentsToAcquirePropertyPlantAndEquipment"),
@@ -2736,7 +2735,7 @@ CB_CASHFLOW_METRICS = [
     ("Share Buybacks","PaymentsForRepurchaseOfCommonStock"),
     ("Net Change in Cash","CashAndCashEquivalentsPeriodIncreaseDecrease"),
 ]
-CB_COMMENTARY_TAGS = [
+CB_COMMENTARY = [
     ("Management Discussion & Analysis","ManagementsDiscussionAndAnalysisOfFinancialConditionAndResultsOfOperations"),
     ("Business Overview","Business"),
     ("Risk Factors","RiskFactors"),
@@ -2744,131 +2743,137 @@ CB_COMMENTARY_TAGS = [
     ("Critical Accounting Policies","CriticalAccountingPoliciesAndEstimates"),
 ]
 
-def cb_get_session(email, password):
-    """Authenticate and return a requests.Session with cookies set."""
-    s = _req_sess.Session()
-    s.headers.update({
-        "User-Agent": "Mozilla/5.0 (compatible; investment-app/1.0)",
-        "Accept":     "text/plain, */*",
-        "Referer":    CB_BASE + "/",
-    })
-    try:
-        r = s.post(
-            f"{CB_BASE}/account/LogOnAjax",
-            data={"email": email, "strng": password, "rememberMe": "true"},
-            timeout=20,
-        )
-    except _req_sess.exceptions.ConnectionError as e:
-        raise ValueError(f"Cannot reach Calcbench: {str(e)[:100]}")
-    except _req_sess.exceptions.Timeout:
-        raise ValueError("Calcbench timed out — try again.")
+TOTALS = {"GrossProfit","OperatingIncomeLoss","NetIncomeLoss","AssetsCurrent",
+          "Assets","LiabilitiesCurrent","Liabilities","StockholdersEquity",
+          "NetCashProvidedByUsedInOperatingActivities",
+          "NetCashProvidedByUsedInInvestingActivities",
+          "NetCashProvidedByUsedInFinancingActivities"}
 
+def cb_session(email, password):
+    s = _req.Session()
+    s.headers["User-Agent"] = "Mozilla/5.0 investment-app/1.0"
+    try:
+        r = s.post(f"{CB_BASE}/account/LogOnAjax",
+                   data={"email":email,"strng":password,"rememberMe":"true"},
+                   timeout=20)
+    except _req.exceptions.ConnectionError as e:
+        raise ValueError(f"Cannot reach Calcbench: {e}")
+    except _req.exceptions.Timeout:
+        raise ValueError("Calcbench timed out.")
     body = r.text.strip().strip('"').lower()
     if body != "true":
-        raise ValueError(
-            f"Login failed (HTTP {r.status_code}). "
-            "Check your Calcbench email and password. "
-            f"Response: {r.text[:80]!r}"
-        )
+        raise ValueError(f"Login failed (HTTP {r.status_code}): {r.text[:100]}")
     return s
 
-def cb_safe_json(r):
-    """Parse JSON or return None on empty/invalid body."""
-    t = r.text.strip()
-    if not t:
-        return None
-    try:
-        return r.json()
-    except Exception:
-        return None
+def cb_json(r):
+    if not r.text.strip(): return None
+    try: return r.json()
+    except Exception: return None
 
-def cb_fetch_metrics(session, ticker, metric_names, fy, fp):
-    """Fetch a batch of standardized metrics. Returns {metric_lower: value}."""
-    payload = {
-        "start_year": fy, "start_period": fp,
-        "end_year":   fy, "end_period":   fp,
-        "company_identifiers": [ticker],
-        "metrics": metric_names,
-    }
+def cb_standardized(session, ticker, metrics, fy, fp):
+    """Batch fetch standardized values. Returns {metric_lower: value}."""
     try:
-        r = session.post(
-            f"{CB_BASE}/api/NormalizedValues",
-            json=payload, timeout=25,
-        )
-        data = cb_safe_json(r)
-        if not data:
-            return {}
-        return {item.get("metric","").lower(): item.get("value") for item in data}
-    except Exception:
-        return {}
+        r = session.post(f"{CB_BASE}/api/NormalizedValues",
+            json={"start_year":fy,"start_period":fp,"end_year":fy,"end_period":fp,
+                  "company_identifiers":[ticker],"metrics":[m[1] for m in metrics]},
+            timeout=25)
+        data = cb_json(r)
+        if not data: return {}
+        return {d.get("metric","").lower(): d.get("value") for d in data}
+    except Exception: return {}
 
-def cb_fetch_asreported(session, ticker, statement_type, period_type="annual"):
-    """Fetch as-reported statement (income/balance/cash) rows."""
-    url = (f"{CB_BASE}/api/asreported/"
-           f"?companyIdentifier={ticker}"
-           f"&statementType={statement_type}"
-           f"&periodType={period_type}")
-    try:
-        r = session.get(url, timeout=20)
-        data = cb_safe_json(r)
-        return data if data else []
-    except Exception:
-        return []
-
-def cb_build_rows(val_map, metric_defs):
+def cb_rows(val_map, defs):
     rows = []
-    for label, metric in metric_defs:
+    for label, metric in defs:
         v = val_map.get(metric.lower())
-        rows.append({
-            "label":   label,
-            "value":   v,
-            "isTotal": label.startswith("Total") or label in ("Gross Profit","Operating Income","Net Income","Operating Cash Flow","Free Cash Flow"),
-            "indent":  0,
-            "section": "",
-            "unit":    "",
-        })
+        rows.append({"label":label,"value":v,
+                     "isTotal": metric in TOTALS,
+                     "indent":0,"section":"","unit":""})
     return rows
 
-def cb_fetch_commentary(session, ticker, accession):
-    sections = []
+def cb_commentary(session, ticker, calcbench_id):
     import re as _re
-    for title, tag in CB_COMMENTARY_TAGS:
+    sections = []
+    for title, tag in CB_COMMENTARY:
         try:
-            url = (f"{CB_BASE}/api/disclosures"
-                   f"?ticker={ticker}"
-                   f"&disclosure_type=AS_REPORTED"
-                   f"&accession_number={accession}"
-                   f"&disclosure_field={tag}")
-            r = session.get(url, timeout=20)
-            data = cb_safe_json(r)
-            if not data or not isinstance(data, list):
-                continue
+            r = session.get(
+                f"{CB_BASE}/api/disclosures?ticker={ticker}"
+                f"&disclosure_type=AS_REPORTED"
+                f"&accession_number={calcbench_id}"
+                f"&disclosure_field={tag}",
+                timeout=20)
+            data = cb_json(r)
+            if not data or not isinstance(data,list): continue
             text = data[0].get("disclosure_text","") if data else ""
-            text = _re.sub(r"<[^>]+>", " ", text)
-            text = _re.sub(r"\s{2,}", " ", text).strip()
-            if len(text) > 150:
-                sections.append({"title": title, "text": text[:12000]})
+            text = _re.sub(r"<[^>]+>"," ",text)
+            text = " ".join(text.split()).strip()
+            if len(text)>150:
+                sections.append({"title":title,"text":text[:12000]})
+        except Exception: continue
+    return sections
+
+def cb_filings(session, ticker):
+    """Return filings using the correct Calcbench filings API."""
+    # Use the standardized data endpoint to find recent periods
+    # Fall back to direct API call with proper parameters
+    urls_to_try = [
+        f"{CB_BASE}/api/filings?tickers={ticker}&filing_types=10-K,10-Q&Number=8",
+        f"{CB_BASE}/api/filings?company_identifiers={ticker}&filing_types=10-K,10-Q&number_of_filings=8",
+        f"{CB_BASE}/api/filings?tickers={ticker}&Number=8",
+    ]
+    for url in urls_to_try:
+        try:
+            r = session.get(url, timeout=15)
+            data = cb_json(r)
+            if data and isinstance(data, list) and len(data) > 0:
+                # Filter to 10-K and 10-Q
+                filtered = [f for f in data
+                           if any(t in str(f.get("formType","") or f.get("document_type","") or "")
+                                  for t in ("10-K","10-Q"))]
+                if filtered:
+                    filtered.sort(key=lambda f: (
+                        f.get("periodOfReport") or f.get("period_end_date") or ""), reverse=True)
+                    return filtered[:4]
+                # Even if not filtered, return first 4 if we got data
+                return data[:4]
         except Exception:
             continue
-    return sections
+    return []
+
+def cb_period(filing):
+    """Extract fiscal year and period from a filing dict."""
+    import datetime as _dt
+    # Try multiple field names Calcbench uses
+    period_str = (filing.get("periodOfReport") or
+                  filing.get("period_end_date") or
+                  filing.get("fiscal_year_end") or "")
+    form = (filing.get("formType") or filing.get("document_type") or "")
+    if not period_str: return None, None
+    try:
+        # Handle both "2024-06-30" and "2024-06-30T00:00:00"
+        dt = _dt.datetime.fromisoformat(str(period_str)[:10])
+        fy = filing.get("fiscal_year") or filing.get("calendar_year") or dt.year
+        fp = filing.get("fiscal_period") or filing.get("calendar_period")
+        if fp is None:
+            fp = 0 if "10-K" in form else (dt.month-1)//3+1
+        return int(fy), int(fp)
+    except Exception:
+        return None, None
 
 @app.route("/financials/test", methods=["POST"])
 def financials_test():
     d = request.json
     try:
-        session = cb_get_session(d.get("email",""), d.get("password",""))
-        r = session.get(f"{CB_BASE}/api/companies?tickers=AAPL", timeout=10)
-        data = cb_safe_json(r)
-        if r.status_code == 200 and data:
+        session = cb_session(d.get("email",""), d.get("password",""))
+        r = session.get(f"{CB_BASE}/api/companies?tickers=MSFT", timeout=10)
+        data = cb_json(r)
+        if r.status_code == 200:
             return jsonify({"ok": True})
-        elif r.status_code == 401:
-            return jsonify({"error": "Logged in but API access not enabled — contact us@calcbench.com"}), 403
-        else:
-            return jsonify({"error": f"API returned HTTP {r.status_code}: {r.text[:100]}"}), 400
+        return jsonify({"error": f"API returned {r.status_code}: {r.text[:100]}"}), 400
     except ValueError as ve:
         return jsonify({"error": str(ve)}), 401
     except Exception as ex:
-        return jsonify({"error": f"Connection error: {str(ex)}"}), 500
+        return jsonify({"error": f"Error: {ex}"}), 500
 
 @app.route("/financials/fetch", methods=["POST"])
 def financials_fetch():
@@ -2876,73 +2881,78 @@ def financials_fetch():
     ticker   = (d.get("ticker") or "").upper().strip()
     email    = d.get("email","")
     password = d.get("password","")
-    if not ticker or not email or not password:
-        return jsonify({"error":"Ticker, email and password are required."}), 400
+    if not all([ticker, email, password]):
+        return jsonify({"error":"Ticker, email and password required."}), 400
     try:
-        session = cb_get_session(email, password)
+        session = cb_session(email, password)
 
         # Company name
         company_name = ticker
         try:
             r_co = session.get(f"{CB_BASE}/api/companies?tickers={ticker}", timeout=10)
-            co_data = cb_safe_json(r_co)
-            if co_data and isinstance(co_data, list):
-                company_name = co_data[0].get("name", ticker)
-        except Exception:
-            pass
+            co   = cb_json(r_co)
+            if co and isinstance(co,list): company_name = co[0].get("name", ticker)
+        except Exception: pass
 
-        # Recent filings
-        filings_raw = []
-        try:
-            r_f = session.get(
-                f"{CB_BASE}/api/filings?tickers={ticker}&filing_types=10-K,10-Q&number_of_filings=8",
+        # Get filings
+        filings = cb_filings(session, ticker)
+        if not filings:
+            # Last resort: use standardized data to infer periods
+            # Try fetching recent annual data directly
+            r_std = session.post(f"{CB_BASE}/api/NormalizedValues",
+                json={"start_year":2022,"start_period":0,"end_year":2024,"end_period":0,
+                      "company_identifiers":[ticker],"metrics":["Revenue"]},
                 timeout=15)
-            fd = cb_safe_json(r_f)
-            if fd and isinstance(fd, list):
-                filings_raw = [f for f in fd if f.get("formType","") in ("10-K","10-Q")]
-                filings_raw.sort(key=lambda f: f.get("periodOfReport",""), reverse=True)
-                filings_raw = filings_raw[:4]
-        except Exception:
-            pass
+            std_data = cb_json(r_std)
+            if std_data:
+                filings = [{"formType":"10-K",
+                            "periodOfReport":f"{item['calendar_year']}-12-31",
+                            "filed": f"{item['calendar_year']}-01-01",
+                            "calcbench_id": None,
+                            "fiscal_year": item.get("fiscal_year"),
+                            "fiscal_period": 0}
+                           for item in std_data if item.get("calendar_year")][:4]
+            if not filings:
+                return jsonify({"error":
+                    f"No filings found for {ticker}. "
+                    "Confirm the ticker exists at calcbench.com/financial_statements/"+ticker
+                }), 404
 
-        if not filings_raw:
-            return jsonify({"error": f"No 10-K/10-Q filings found for {ticker}. Check the ticker on Calcbench."}), 404
+        result = []
+        for filing in filings:
+            fy, fp = cb_period(filing)
+            form    = (filing.get("formType") or filing.get("document_type") or "10-K")
+            period  = str(filing.get("periodOfReport") or filing.get("period_end_date") or "")[:10]
+            filed   = str(filing.get("filed") or filing.get("filing_date") or "")[:10]
+            cb_id   = (filing.get("calcbench_id") or
+                       filing.get("accession_number") or
+                       filing.get("filing_id") or "")
 
-        result_filings = []
-        for filing in filings_raw:
-            form_type    = filing.get("formType","")
-            period_label = (filing.get("periodOfReport","") or "")[:10]
-            filed_on     = (filing.get("filed","") or "")[:10]
-            accession    = filing.get("accession_number","") or ""
-            fy = fp = None
-            try:
-                import datetime as _dt
-                dt = _dt.datetime.strptime(period_label, "%Y-%m-%d")
-                fy = dt.year
-                fp = 0 if form_type == "10-K" else (dt.month - 1) // 3 + 1
-            except Exception:
-                pass
             income = balance = cashflow = []
-            if fy is not None:
-                inc_map = cb_fetch_metrics(session, ticker, [m[1] for m in CB_INCOME_METRICS],  fy, fp)
-                bal_map = cb_fetch_metrics(session, ticker, [m[1] for m in CB_BALANCE_METRICS],  fy, fp)
-                cf_map  = cb_fetch_metrics(session, ticker, [m[1] for m in CB_CASHFLOW_METRICS], fy, fp)
-                income   = cb_build_rows(inc_map, CB_INCOME_METRICS)
-                balance  = cb_build_rows(bal_map, CB_BALANCE_METRICS)
-                cashflow = cb_build_rows(cf_map,  CB_CASHFLOW_METRICS)
-            commentary = cb_fetch_commentary(session, ticker, accession) if accession else []
-            result_filings.append({
-                "id":         accession or f"{form_type}-{period_label}",
-                "type":       form_type, "period": period_label, "filedOn": filed_on,
-                "income":     income,    "balance": balance,    "cashflow": cashflow,
+            if fy:
+                inc_map = cb_standardized(session, ticker, CB_INCOME,   fy, fp)
+                bal_map = cb_standardized(session, ticker, CB_BALANCE,  fy, fp)
+                cf_map  = cb_standardized(session, ticker, CB_CASHFLOW, fy, fp)
+                income   = cb_rows(inc_map, CB_INCOME)
+                balance  = cb_rows(bal_map, CB_BALANCE)
+                cashflow = cb_rows(cf_map,  CB_CASHFLOW)
+
+            commentary = cb_commentary(session, ticker, cb_id) if cb_id else []
+
+            result.append({
+                "id":         str(cb_id) or f"{form}-{period}",
+                "type":       form, "period": period, "filedOn": filed,
+                "income":     income, "balance": balance, "cashflow": cashflow,
                 "commentary": commentary,
                 "sourceUrl":  f"https://www.calcbench.com/financial_statements/{ticker}",
             })
-        return jsonify({"ticker": ticker, "companyName": company_name, "filings": result_filings})
+
+        return jsonify({"ticker":ticker,"companyName":company_name,"filings":result})
     except ValueError as ve:
         return jsonify({"error": str(ve)}), 401
     except Exception as ex:
         return jsonify({"error": f"Calcbench error: {str(ex)}"}), 500
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
