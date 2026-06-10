@@ -365,15 +365,38 @@ def run_pair(t1, t2, start, end, window=60, custom=None):
     corr = round(float(cb[t1].corr(cb[t2])), 3)
 
     # Context assets: SPY, TLT (10Y bond proxy), GLD, optional custom
-    def norm_series(ticker):
+    # Data source: Yahoo Finance via yfinance
+    # auto_adjust=False so we use raw Close; for TLT we use Adj Close to
+    # capture dividend reinvestment (coupons), giving true total return.
+    def norm_series(ctx_ticker):
         try:
-            df = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=True)
-            if df.empty: return None, None
-            s = df["Close"].squeeze().reindex(cb.index, method="ffill")
-            normed = (s/s.iloc[0]*100).round(2)
-            ret    = round((float(s.iloc[-1])/float(s.iloc[0])-1)*100,1)
-            return [v if not np.isnan(v) else None for v in normed], ret
-        except: return None, None
+            # Use auto_adjust=False and take Adj Close for total-return accuracy
+            # This correctly reflects dividend income for TLT (bond ETF coupons)
+            # and split-adjusted prices for equities
+            ctx_df = yf.download(ctx_ticker, start=start, end=end,
+                                  progress=False, auto_adjust=False)
+            if ctx_df.empty: return None, None
+            # Use Adj Close for total return (dividends + price)
+            if ("Adj Close", ctx_ticker) in ctx_df.columns:
+                raw = ctx_df[("Adj Close", ctx_ticker)].squeeze()
+            elif "Adj Close" in ctx_df.columns:
+                raw = ctx_df["Adj Close"].squeeze()
+            else:
+                raw = ctx_df["Close"].squeeze()
+            # Align to the pair date range — use own dates, not pair dates
+            # to avoid reindex truncation bugs
+            raw = raw.dropna()
+            if raw.empty: return None, None
+            # Rebase to 100 from first available date in range
+            base   = float(raw.iloc[0])
+            normed = (raw / base * 100).round(2)
+            ret    = round((float(raw.iloc[-1]) / base - 1) * 100, 1)
+            # Align to pair dates for chart consistency
+            normed_aligned = normed.reindex(cb.index, method="ffill")
+            return [round(float(v), 2) if not np.isnan(v) else None
+                    for v in normed_aligned], ret
+        except Exception:
+            return None, None
 
     spy_n, spy_r = norm_series("SPY")
     tlt_n, tlt_r = norm_series("TLT")
