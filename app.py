@@ -867,16 +867,26 @@ function applyView(key){
   if(!raw) return;
   const st   = cvState[key];
   let { labels, datasets } = raw;
-  // Apply date range filter first
   if(st.view==='R')
     ({ labels, datasets } = filterRange(labels, datasets, st.from, st.to));
   else
     ({ labels, datasets } = resample(labels, datasets, st.view));
-  // Update existing chart (faster than destroy/rebuild)
   const chart = reg.getChart();
-  if(!chart) { reg.rebuild(labels, datasets); return; }
-  chart.data.labels   = labels;
+  if(!chart){ reg.rebuild(labels, datasets); return; }
+  chart.data.labels = labels;
   chart.data.datasets.forEach((ds,i)=>{ if(datasets[i]) ds.data = datasets[i].data; });
+  // Recompute y-axis scale based on visible data (skip corr chart which has fixed range)
+  if(chart.options.scales && chart.options.scales.y && key !== 'pair-corr'){
+    const visVals = allVals(...datasets.map(d=>d.data));
+    if(visVals.length){
+      const scaled = smartScale(visVals, chart.options.scales.y._prefix||'');
+      if(scaled.min !== undefined){
+        chart.options.scales.y.min = scaled.min;
+        chart.options.scales.y.max = scaled.max;
+        chart.options.scales.y.ticks = {...chart.options.scales.y.ticks, ...scaled.ticks};
+      }
+    }
+  }
   chart.update('none');
 }
 
@@ -943,7 +953,52 @@ function setUI(pfx,state){
     el.style.display=s===state?(s==='sw'?'flex':'block'):'none';
   });
 }
-function chartOpts(pre){
+// ── Auto-scale: compute nice min/max/step from actual data values ──
+function smartScale(allValues, pre){
+  const vals = allValues.filter(v=>v!=null&&!isNaN(v));
+  if(!vals.length) return {};
+  const raw_min = Math.min(...vals);
+  const raw_max = Math.max(...vals);
+  const range   = raw_max - raw_min;
+  if(range === 0) return {};           // flat line — let Chart.js handle it
+
+  // Pick a step size that gives ~8-12 ticks
+  const roughStep = range / 8;
+  // Round step to a nice number: 0.001 0.005 0.01 0.05 0.1 0.5 1 5 10 50 100 500 1000 …
+  const magnitude = Math.pow(10, Math.floor(Math.log10(roughStep)));
+  const niceFracs = [1, 2, 2.5, 5, 10];
+  let step = magnitude;
+  for(const f of niceFracs){
+    const candidate = magnitude * f;
+    if(range / candidate <= 12){ step = candidate; break; }
+  }
+
+  // Expand min/max to nearest step boundary with one-step padding
+  const min = Math.floor(raw_min / step) * step - step;
+  const max = Math.ceil(raw_max  / step) * step + step;
+
+  const fmt = v => {
+    if(pre && pre !== '') return pre + v.toLocaleString();
+    // format ticks nicely based on magnitude
+    if(Math.abs(v) >= 1000) return v.toLocaleString();
+    if(step < 0.01) return v.toFixed(4);
+    if(step < 0.1)  return v.toFixed(3);
+    if(step < 1)    return v.toFixed(2);
+    if(step < 10)   return v.toFixed(1);
+    return Math.round(v).toLocaleString();
+  };
+
+  return { min, max,
+    ticks:{ color:'#94A3B8', font:{family:'Inter',size:10},
+            stepSize: step, callback: fmt }
+  };
+}
+
+function chartOpts(pre, allValues){
+  // allValues: optional flat array of all y-values across all datasets for this chart
+  const yScale = allValues ? smartScale(allValues, pre)
+    : { ticks:{ color:'#94A3B8', font:{family:'Inter',size:10},
+                callback: v=>(pre||'')+v.toLocaleString() }};
   return{responsive:true,interaction:{mode:'index',intersect:false},
     plugins:{legend:{labels:{color:'#64748B',font:{family:'Inter',size:11}}},
       tooltip:{backgroundColor:'#fff',borderColor:'#E2E8F0',borderWidth:1,titleColor:'#0F172A',bodyColor:'#64748B',
@@ -951,8 +1006,13 @@ function chartOpts(pre){
         callbacks:{label:c=>(pre||'')+(typeof c.parsed.y==='number'?c.parsed.y.toLocaleString():c.parsed.y)}}},
     scales:{
       x:{ticks:{color:'#94A3B8',font:{family:'Inter',size:10},maxTicksLimit:10},grid:{color:'#F1F5F9'}},
-      y:{ticks:{color:'#94A3B8',font:{family:'Inter',size:10},callback:v=>(pre||'')+v.toLocaleString()},grid:{color:'#F1F5F9'}}
+      y:{grid:{color:'#F1F5F9'}, ...yScale}
     }};
+}
+
+// Helper: collect all non-null values across datasets
+function allVals(...datasets){
+  return datasets.flat().filter(v=>v!=null&&!isNaN(v));
 }
 function tog(fldId,cbId){document.getElementById(fldId).classList.toggle('on',document.getElementById(cbId).checked)}
 function applyBm(){document.getElementById('bt-bm-custom').style.display=document.getElementById('bt-bm').value==='custom'?'block':'none'}
@@ -1052,7 +1112,7 @@ function renderBt(data,params){
     {label:'📍 Holding Period',data:holdingData,borderColor:'#2563EB',backgroundColor:'rgba(37,99,235,0.08)',borderWidth:2.5,pointRadius:0,tension:0,fill:true,spanGaps:true},
     {label:'💰 Cash (Ready to Deploy)',data:cashData,borderColor:'#94A3B8',backgroundColor:'rgba(148,163,184,0.05)',borderWidth:1.5,pointRadius:0,tension:0,fill:true,spanGaps:true},
     {label:bmlbl,data:data.bmEquity.map(e=>e.value),borderColor:'#F59E0B',borderWidth:1.5,pointRadius:0,borderDash:[5,4],fill:false,tension:0},
-  ]},options:{...chartOpts('$'),plugins:{...chartOpts('$').plugins,legend:{labels:{color:'#64748B',font:{family:'Inter',size:11},usePointStyle:true}}}}});
+  ]},options:{...chartOpts('$', allVals(eqVals, bmVals)),plugins:{...chartOpts('$',allVals(eqVals,bmVals)).plugins,legend:{labels:{color:'#64748B',font:{family:'Inter',size:11},usePointStyle:true}}}}});
   // Register with ChartView engine
   cvRegister('bt',
     ()=>btChart,
@@ -1203,7 +1263,7 @@ async function runPair(){
     pairChart=new Chart(document.getElementById('pair-chart'),{type:'line',data:{labels:data.dates,datasets:[
       {label:t1,data:data.price1,borderColor:'#2563EB',borderWidth:2,pointRadius:0,tension:.1,fill:false},
       {label:t2,data:data.price2,borderColor:'#F59E0B',borderWidth:2,pointRadius:0,tension:.1,fill:false}
-    ]},options:chartOpts('')});
+    ]},options:chartOpts('',allVals(data.price1,data.price2))});
     cvRegister('pair-norm',()=>pairChart,
       ()=>({labels:data.dates,datasets:[
         {label:t1,data:data.price1,borderColor:'#2563EB',borderWidth:2,pointRadius:0,tension:.1,fill:false},
@@ -1228,7 +1288,7 @@ async function runPair(){
     if(ratioChart)ratioChart.destroy();
     ratioChart=new Chart(document.getElementById('ratio-chart'),{type:'line',data:{labels:data.dates,datasets:[
       {label:t1+'/'+t2+' ratio',data:data.ratio,borderColor:'#0891B2',borderWidth:1.5,pointRadius:0,tension:.1,fill:'origin',backgroundColor:'rgba(8,145,178,.05)'}
-    ]},options:chartOpts('')});
+    ]},options:chartOpts('',allVals(data.ratio))});
     cvRegister('pair-ratio',()=>ratioChart,
       ()=>({labels:data.dates,datasets:[{label:t1+'/'+t2+' ratio',data:data.ratio,borderColor:'#0891B2',borderWidth:1.5,pointRadius:0,tension:.1,fill:'origin',backgroundColor:'rgba(8,145,178,.05)'}]}),
       (lbl,ds)=>{ratioChart.data.labels=lbl;ds.forEach((d,i)=>{if(ratioChart.data.datasets[i])ratioChart.data.datasets[i].data=d.data;});ratioChart.update();});
@@ -1245,7 +1305,8 @@ async function runPair(){
       ctxDatasets.push({label:data.ctxCustomTicker,data:data.ctx.custom,borderColor:'#DC2626',borderWidth:1.5,pointRadius:0,borderDash:[4,3],tension:.1,fill:false});
     }
     if(ctxChart)ctxChart.destroy();
-    ctxChart=new Chart(document.getElementById('ctx-chart'),{type:'line',data:{labels:data.dates,datasets:ctxDatasets},options:chartOpts('')});
+    const ctxAllVals=allVals(...ctxDatasets.map(d=>d.data));
+    ctxChart=new Chart(document.getElementById('ctx-chart'),{type:'line',data:{labels:data.dates,datasets:ctxDatasets},options:chartOpts('',ctxAllVals)});
     cvRegister('pair-ctx',()=>ctxChart,
       ()=>({labels:data.dates,datasets:ctxDatasets}),
       (lbl,ds)=>{ctxChart.data.labels=lbl;ds.forEach((d,i)=>{if(ctxChart.data.datasets[i])ctxChart.data.datasets[i].data=d.data;});ctxChart.update();});
@@ -1362,7 +1423,7 @@ function renderPf(d){
   if(d.benchmark){
     document.getElementById('pf-bm-wrap').style.display='block';
     if(pfBmChart)pfBmChart.destroy();
-    pfBmChart=new Chart(document.getElementById('pf-bm-chart'),{type:'line',data:{labels:d.benchmark.dates,datasets:[{label:'Portfolio',data:d.benchmark.portCurve,borderColor:'#2563EB',borderWidth:2,pointRadius:0,tension:.1,fill:false},{label:d.benchmark.ticker,data:d.benchmark.bmCurve,borderColor:'#F59E0B',borderWidth:1.5,pointRadius:0,borderDash:[5,4],fill:false}]},options:chartOpts('')});
+    pfBmChart=new Chart(document.getElementById('pf-bm-chart'),{type:'line',data:{labels:d.benchmark.dates,datasets:[{label:'Portfolio',data:d.benchmark.portCurve,borderColor:'#2563EB',borderWidth:2,pointRadius:0,tension:.1,fill:false},{label:d.benchmark.ticker,data:d.benchmark.bmCurve,borderColor:'#F59E0B',borderWidth:1.5,pointRadius:0,borderDash:[5,4],fill:false}]},options:chartOpts('',allVals(d.benchmark.portCurve,d.benchmark.bmCurve))});
     cvRegister('pf-bm',()=>pfBmChart,
       ()=>({labels:d.benchmark.dates,datasets:[{label:'Portfolio',data:d.benchmark.portCurve,borderColor:'#2563EB',borderWidth:2,pointRadius:0,tension:.1,fill:false},{label:d.benchmark.ticker,data:d.benchmark.bmCurve,borderColor:'#F59E0B',borderWidth:1.5,pointRadius:0,borderDash:[5,4],fill:false}]}),
       (lbl,ds)=>{pfBmChart.data.labels=lbl;ds.forEach((dd,i)=>{if(pfBmChart.data.datasets[i])pfBmChart.data.datasets[i].data=dd.data;});pfBmChart.update();});
