@@ -434,11 +434,41 @@ async function runFinancials(){
     document.getElementById('cb-sw').style.display='none';
     document.getElementById('cb-res').style.display='block';
   } catch(e){
-    showErr('cb-err', e.message);
     document.getElementById('cb-sw').style.display='none';
+    const errEl = document.getElementById('cb-err');
+    errEl.textContent = '⚠ ' + e.message;
+    errEl.style.display = 'block';
+    errEl.style.marginTop = '0.75rem';
+    console.error('Financials fetch error:', e);
   } finally {
     btn.disabled=false; btn.textContent='▶ Fetch';
   }
+}
+
+async function testCbConnection(){
+  const email  = document.getElementById('cb-email').value.trim();
+  const pass   = document.getElementById('cb-pass').value;
+  if(!email||!pass){ showErr('cb-err','Enter email and password first.'); return; }
+  showErr('cb-err','');
+  const btn = event.target;
+  btn.textContent='Testing…'; btn.disabled=true;
+  try{
+    const r = await fetch('/financials/test',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({email,password:pass})});
+    const d = await r.json();
+    if(d.ok){
+      const errEl = document.getElementById('cb-err');
+      errEl.textContent='✅ Connected to Calcbench as '+email;
+      errEl.style.display='block';
+      errEl.style.background='#F0FDF4';
+      errEl.style.borderColor='#BBF7D0';
+      errEl.style.color='#16A34A';
+    } else {
+      showErr('cb-err', d.error||'Connection failed');
+    }
+  } catch(e){ showErr('cb-err', e.message); }
+  finally{ btn.textContent='Test Connection'; btn.disabled=false; }
 }
 
 function switchFiling(){
@@ -2711,10 +2741,17 @@ CB_COMMENTARY_SECTIONS = [
 def cb_login(email, password):
     """Return authenticated requests.Session or raise."""
     s = cb_requests.Session()
-    r = s.post(f"{CB_BASE}/account/LogOnAjax",
-               data={"email":email,"strng":password,"rememberMe":"true"}, timeout=15)
+    s.headers.update({"User-Agent":"Mozilla/5.0","Accept":"application/json,text/html,*/*"})
+    try:
+        r = s.post(f"{CB_BASE}/account/LogOnAjax",
+                   data={"email":email,"strng":password,"rememberMe":"true"},
+                   timeout=20, verify=True)
+    except cb_requests.exceptions.ConnectionError:
+        raise ValueError("Cannot reach Calcbench — check Railway outbound network or try again.")
+    except cb_requests.exceptions.Timeout:
+        raise ValueError("Calcbench request timed out — try again.")
     if r.text.strip().lower() != "true":
-        raise ValueError("Calcbench login failed — check your email and password.")
+        raise ValueError(f"Calcbench login failed — check your email and password. (Response: {r.text[:80]})")
     return s
 
 def cb_get_filings(session, ticker, n=4):
@@ -2816,6 +2853,19 @@ def cb_period_from_filing(filing):
         return year, period_int
     except:
         return None, None
+
+@app.route("/financials/test", methods=["POST"])
+def financials_test():
+    d = request.json
+    try:
+        session = cb_login(d.get("email",""), d.get("password",""))
+        # Quick check — get user profile
+        r = session.get(f"{CB_BASE}/api/me", timeout=10)
+        return jsonify({"ok": True})
+    except ValueError as ve:
+        return jsonify({"error": str(ve)}), 401
+    except Exception as ex:
+        return jsonify({"error": f"Connection error: {str(ex)}"}), 500
 
 @app.route("/financials/fetch", methods=["POST"])
 def financials_fetch():
