@@ -378,12 +378,12 @@ canvas{max-height:240px}
 .cv-toolbar{display:flex;align-items:center;gap:.35rem;flex-wrap:wrap;margin-bottom:.65rem}
 .cv-toolbar .ct{margin-bottom:0;flex:1;min-width:0}
 .cv-btn{padding:.22rem .55rem;font-size:.68rem;font-weight:600;border:1px solid var(--bdr2);border-radius:5px;background:var(--sur2);color:var(--mut);cursor:pointer;font-family:var(--f);white-space:nowrap}
-.cv-btn:hover{background:var(--acl);border-color:var(--acc);color:var(--acc)}
-.cv-btn.cv-active{background:var(--acc);border-color:var(--acc);color:#fff}
+.cv-btn:hover{background:#F1F5F9;border-color:#94A3B8;color:var(--txt)}
+.cv-btn.cv-active{background:#334155;border-color:#334155;color:#fff}
 .cv-range{display:none;align-items:center;gap:.3rem;margin-top:.4rem;flex-wrap:wrap}
 .cv-range.open{display:flex}
 .cv-range input[type=date]{width:auto;min-width:0;font-size:.72rem;padding:.28rem .4rem;border-radius:5px}
-.cv-range button{padding:.28rem .6rem;font-size:.7rem;font-weight:600;border:1px solid var(--acc);border-radius:5px;background:var(--acl);color:var(--acc);cursor:pointer;font-family:var(--f)}
+.cv-range button{padding:.28rem .6rem;font-size:.7rem;font-weight:600;border:1px solid #94A3B8;border-radius:5px;background:#F1F5F9;color:#334155;cursor:pointer;font-family:var(--f)}
 .tc{background:var(--sur);border:1px solid var(--bdr);border-radius:var(--r);overflow:hidden;box-shadow:var(--shd);margin-bottom:1rem}
 .th{padding:.65rem 1rem;border-bottom:1px solid var(--bdr);font-size:.65rem;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--mut);display:flex;justify-content:space-between;align-items:center}
 .bge{background:var(--acl);color:var(--acc);padding:.15rem .5rem;border-radius:20px;font-size:.65rem;font-weight:600}
@@ -400,12 +400,12 @@ tr:hover td{background:var(--sur2)}
 .er{background:var(--rdl);border:1px solid #FECACA;border-radius:6px;padding:.7rem .85rem;font-size:.78rem;color:var(--red);margin-top:.6rem;display:none}
 .mcols{display:grid;grid-template-columns:1fr 1fr;gap:.4rem;margin-bottom:.7rem}
 .mch{display:flex;flex-direction:column;align-items:flex-start;gap:.28rem;padding:.4rem .5rem;border-radius:6px 6px 0 0;border:1px solid transparent}
-.mch.buy{background:var(--acl);border-color:#BFDBFE}.mch.sell{background:var(--rdl);border-color:#FECACA}
+.mch.buy{background:#F1F5F9;border-color:#CBD5E1}.mch.sell{background:#F8F7F4;border-color:#D6D1C8}
 .mch .mct{font-size:.65rem;font-weight:700;letter-spacing:.5px;text-transform:uppercase}
-.mch.buy .mct{color:var(--acc)}.mch.sell .mct{color:var(--red)}
+.mch.buy .mct{color:#475569}.mch.sell .mct{color:#6B6459}
 .aog{display:flex;width:100%;border-radius:5px;overflow:hidden;border:1px solid var(--bdr2)}
 .aog button{flex:1;padding:.2rem 0;font-size:.68rem;font-weight:700;text-align:center;border:none;cursor:pointer;background:var(--sur2);color:var(--mut);font-family:var(--f)}
-.aog button.aa{background:#7C3AED;color:#fff}.aog button.ao{background:#0891B2;color:#fff}
+.aog button.aa{background:#334155;color:#fff}.aog button.ao{background:#64748B;color:#fff}
 .mi{border:1px solid var(--bdr);border-top:none;border-radius:0 0 6px 6px;padding:.38rem;display:flex;flex-direction:column;gap:.3rem}
 .mr label{font-size:.65rem;font-weight:500;color:var(--mut)}
 .mr input{font-size:.78rem;padding:.35rem .48rem;border:1px solid var(--bdr2);border-radius:5px;background:var(--sur);color:var(--txt);font-family:var(--f);width:100%;outline:none;box-sizing:border-box}
@@ -490,15 +490,15 @@ tr:hover td{background:var(--sur2)}
       </div>
       <div class="fd"><label>Mode</label>
         <div class="aog" style="border-radius:6px;border:1px solid var(--bdr2)">
-          <button id="bm-hold" class="ao" onclick="setBm('hold')" style="padding:.42rem 0;font-size:.76rem">📈 Buy &amp; Hold</button>
-          <button id="bm-rules" onclick="setBm('rules')" style="padding:.42rem 0;font-size:.76rem">⚙️ Same Rules</button>
+          <button id="bm-hold" class="ao" onclick="setBm('hold')" style="padding:.42rem 0;font-size:.76rem">Buy &amp; Hold</button>
+          <button id="bm-rules" onclick="setBm('rules')" style="padding:.42rem 0;font-size:.76rem">Same Rules</button>
         </div>
       </div>
       <div class="sl">Metrics <span style="font-weight:400;font-size:.65rem;text-transform:none;letter-spacing:0;color:var(--mut)">— all optional</span></div>
       <div style="font-size:.68rem;color:var(--mut);margin-bottom:.55rem">AND = all must be met · OR = any one triggers</div>
       <div class="mcols">
         <div>
-          <div class="mch buy"><span class="mct">💸 Deploy Capital</span>
+          <div class="mch buy"><span class="mct">Deploy Capital</span>
             <div class="aog"><button id="buy-and" onclick="setGate('buy','and')">AND</button><button id="buy-or" class="ao" onclick="setGate('buy','or')">OR</button></div>
           </div>
           <div class="mi">
@@ -516,7 +516,7 @@ tr:hover td{background:var(--sur2)}
           </div>
         </div>
         <div>
-          <div class="mch sell"><span class="mct">💰 Return Capital</span>
+          <div class="mch sell"><span class="mct">Return Capital</span>
             <div class="aog"><button id="sell-and" onclick="setGate('sell','and')">AND</button><button id="sell-or" class="ao" onclick="setGate('sell','or')">OR</button></div>
           </div>
           <div class="mi">
