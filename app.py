@@ -463,13 +463,13 @@ tr:hover td{background:var(--sur2)}
       <div class="sl">Asset</div>
       <div class="fd"><label>Ticker</label><input id="bt-ticker" value="QQQ"/></div>
       <div class="r2">
-        <div class="fd"><label>Start</label><input type="date" id="bt-start" value="2000-01-01" style="font-size:.75rem;padding:.43rem .35rem" oninput="calcDates('bt')"/></div>
-        <div class="fd"><label>End</label><input type="date" id="bt-end" value="2020-01-01" style="font-size:.75rem;padding:.43rem .35rem" oninput="calcDates('bt')"/></div>
+        <div class="fd"><label>Start</label><input type="date" id="bt-start" value="2000-01-01" style="font-size:.75rem;padding:.43rem .35rem" oninput="calcDates('bt',  this.id.includes('start')?'start':this.id.includes('end')?'end':'days')"/></div>
+        <div class="fd"><label>End</label><input type="date" id="bt-end" value="2020-01-01" style="font-size:.75rem;padding:.43rem .35rem" oninput="calcDates('bt',  this.id.includes('start')?'start':this.id.includes('end')?'end':'days')"/></div>
       </div>
       <div class="fd">
         <label>Natural Days <span style="font-weight:400;color:var(--mut)">(optional — fills missing date)</span></label>
         <div style="display:flex;gap:.4rem;align-items:center">
-          <input type="number" id="bt-days" placeholder="e.g. 3650" min="1" style="flex:1" oninput="calcDates('bt')"/>
+          <input type="number" id="bt-days" placeholder="e.g. 3650" min="1" style="flex:1" oninput="calcDates('bt',  this.id.includes('start')?'start':this.id.includes('end')?'end':'days')"/>
           <div id="bt-days-hint" style="font-size:.68rem;color:var(--mut);white-space:nowrap;min-width:60px"></div>
         </div>
       </div>
@@ -626,13 +626,13 @@ tr:hover td{background:var(--sur2)}
     <div class="fd"><label>Ticker 1</label><input id="pair-t1" value="QQQ"/></div>
     <div class="fd"><label>Ticker 2</label><input id="pair-t2" value="SPY"/></div>
     <div class="r2">
-      <div class="fd"><label>Start</label><input type="date" id="pair-start" value="2010-01-01" style="font-size:.75rem;padding:.43rem .35rem" oninput="calcDates('pair')"/></div>
-      <div class="fd"><label>End</label><input type="date" id="pair-end" value="2024-01-01" style="font-size:.75rem;padding:.43rem .35rem" oninput="calcDates('pair')"/></div>
+      <div class="fd"><label>Start</label><input type="date" id="pair-start" value="2010-01-01" style="font-size:.75rem;padding:.43rem .35rem" oninput="calcDates('pair',this.id.includes('start')?'start':this.id.includes('end')?'end':'days')"/></div>
+      <div class="fd"><label>End</label><input type="date" id="pair-end" value="2024-01-01" style="font-size:.75rem;padding:.43rem .35rem" oninput="calcDates('pair',this.id.includes('start')?'start':this.id.includes('end')?'end':'days')"/></div>
     </div>
     <div class="fd">
       <label>Natural Days <span style="font-weight:400;color:var(--mut)">(optional — fills missing date)</span></label>
       <div style="display:flex;gap:.4rem;align-items:center">
-        <input type="number" id="pair-days" placeholder="e.g. 3650" min="1" style="flex:1" oninput="calcDates('pair')"/>
+        <input type="number" id="pair-days" placeholder="e.g. 3650" min="1" style="flex:1" oninput="calcDates('pair',this.id.includes('start')?'start':this.id.includes('end')?'end':'days')"/>
         <div id="pair-days-hint" style="font-size:.68rem;color:var(--mut);white-space:nowrap;min-width:60px"></div>
       </div>
     </div>
@@ -1029,72 +1029,64 @@ function allVals(...datasets){
   return datasets.flat().filter(v=>v!=null&&!isNaN(v));
 }
 // ── Three-way date calculator ──────────────────────────────────────────
-// Rules:
-//   start + end  → compute days
-//   start + days → compute end
-//   end   + days → compute start
-//   all three    → prioritise start+end, update days
-function calcDates(pfx){
+// The field the user JUST edited is the trigger — the other two are solved.
+// Track which field triggered via the 'changed' param.
+function calcDates(pfx, changed){
   const sEl = document.getElementById(pfx+'-start');
   const eEl = document.getElementById(pfx+'-end');
   const dEl = document.getElementById(pfx+'-days');
   const hEl = document.getElementById(pfx+'-days-hint');
   if(!sEl||!eEl||!dEl) return;
 
-  const sVal = sEl.value;
-  const eVal = eEl.value;
-  const dVal = dEl.value ? parseInt(dEl.value) : null;
-
-  const hasS = sVal !== '';
-  const hasE = eVal !== '';
-  const hasD = dVal !== null && dVal > 0;
-
-  // Helper: add days to a date string, return YYYY-MM-DD
   function addDays(dateStr, n){
-    const d = new Date(dateStr);
-    d.setDate(d.getDate() + n);
+    const d = new Date(dateStr); d.setDate(d.getDate()+n);
     return d.toISOString().slice(0,10);
   }
-  function diffDays(s, e){
-    return Math.round((new Date(e) - new Date(s)) / 86400000);
-  }
-  function approxYears(d){ return (d/365.25).toFixed(1)+'y'; }
+  function diffDays(s,e){ return Math.round((new Date(e)-new Date(s))/86400000); }
+  function approxYears(d){ return '≈ '+(d/365.25).toFixed(1)+'y'; }
+  function setHint(txt){ if(hEl) hEl.textContent=txt; }
 
-  if(hasS && hasE){
-    // Both dates filled — compute days
-    const diff = diffDays(sVal, eVal);
-    if(diff > 0){
-      dEl.value = diff;
-      if(hEl) hEl.textContent = '≈ '+approxYears(diff);
+  const s=sEl.value, e=eEl.value, d=dEl.value?parseInt(dEl.value):null;
+  const hasS=s!=='', hasE=e!=='', hasD=d!==null&&d>0;
+
+  if(changed==='days'){
+    // User typed days — need one date to calculate the other
+    if(hasS && hasD){
+      eEl.value = addDays(s, d);
+      setHint('→ '+eEl.value+' '+approxYears(d));
+    } else if(hasE && hasD){
+      sEl.value = addDays(e, -d);
+      setHint('← '+sEl.value+' '+approxYears(d));
+    } else if(hasD){
+      setHint(approxYears(d));
     }
-  } else if(hasS && hasD && !hasE){
-    // Start + days → fill end
-    const end = addDays(sVal, dVal);
-    eEl.value = end;
-    if(hEl) hEl.textContent = '→ '+end;
-  } else if(hasE && hasD && !hasS){
-    // End + days → fill start
-    const start = addDays(eVal, -dVal);
-    sEl.value = start;
-    if(hEl) hEl.textContent = '← '+start;
-  } else if(hasS && !hasE && !hasD){
-    if(hEl) hEl.textContent = '';
-  } else if(hasD && !hasS && !hasE){
-    if(hEl) hEl.textContent = '≈ '+approxYears(dVal);
+  } else if(changed==='start'){
+    if(hasS && hasE){
+      const diff=diffDays(s,e);
+      if(diff>0){ dEl.value=diff; setHint(approxYears(diff)); }
+    } else if(hasS && hasD){
+      eEl.value=addDays(s,d);
+      setHint('→ '+eEl.value);
+    } else { setHint(''); }
+  } else if(changed==='end'){
+    if(hasS && hasE){
+      const diff=diffDays(s,e);
+      if(diff>0){ dEl.value=diff; setHint(approxYears(diff)); }
+    } else if(hasE && hasD){
+      sEl.value=addDays(e,-d);
+      setHint('← '+sEl.value);
+    } else { setHint(''); }
+  } else {
+    // Init call — just compute days from defaults
+    if(hasS && hasE){
+      const diff=diffDays(s,e);
+      if(diff>0){ dEl.value=diff; setHint(approxYears(diff)); }
+    }
   }
 }
 
-// Initialise hints on page load
-window.addEventListener('DOMContentLoaded', ()=>{
-  ['bt','pair'].forEach(pfx=>{
-    const sEl=document.getElementById(pfx+'-start');
-    const eEl=document.getElementById(pfx+'-end');
-    const dEl=document.getElementById(pfx+'-days');
-    if(sEl&&eEl&&dEl){
-      // Pre-calculate days for default dates
-      calcDates(pfx);
-    }
-  });
+window.addEventListener('DOMContentLoaded',()=>{
+  ['bt','pair'].forEach(pfx=>calcDates(pfx,null));
 });
 // ───────────────────────────────────────────────────────────────────────
 
