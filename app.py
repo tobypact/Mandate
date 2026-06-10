@@ -1188,7 +1188,7 @@ function renderBt(data,params){
     {label:'📍 Holding Period',data:holdingData,borderColor:'#2563EB',backgroundColor:'rgba(37,99,235,0.08)',borderWidth:2.5,pointRadius:0,tension:0,fill:true,spanGaps:true},
     {label:'💰 Cash (Ready to Deploy)',data:cashData,borderColor:'#94A3B8',backgroundColor:'rgba(148,163,184,0.05)',borderWidth:1.5,pointRadius:0,tension:0,fill:true,spanGaps:true},
     {label:bmlbl,data:data.bmEquity.map(e=>e.value),borderColor:'#F59E0B',borderWidth:1.5,pointRadius:0,borderDash:[5,4],fill:false,tension:0},
-  ]},options:{...chartOpts('$', allVals(eqVals, bmVals)),plugins:{...chartOpts('$',allVals(eqVals,bmVals)).plugins,legend:{labels:{color:'#64748B',font:{family:'Inter',size:11},usePointStyle:true}}}}});
+  ]},options:{...chartOpts('$', allVals(eqVals, data.bmEquity.map(e=>e.value))),plugins:{...chartOpts('$',allVals(eqVals,data.bmEquity.map(e=>e.value))).plugins,legend:{labels:{color:'#64748B',font:{family:'Inter',size:11},usePointStyle:true}}}}});
   // Register with ChartView engine
   cvRegister('bt',
     ()=>btChart,
