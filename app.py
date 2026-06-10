@@ -286,18 +286,49 @@ def calc_valuation(price, eps, gr, years=5, disc=0.10):
             "projEps":[round(e,2) for e in proj]}
 
 
-def run_pair(t1, t2, start, end):
+def run_pair(t1, t2, start, end, window=60, custom=None):
     d1 = yf.download(t1, start=start, end=end, progress=False, auto_adjust=True)
     d2 = yf.download(t2, start=start, end=end, progress=False, auto_adjust=True)
     if d1.empty or d2.empty: return None, "No data"
+
     p1 = d1["Close"].squeeze(); p2 = d2["Close"].squeeze()
     n1 = (p1/p1.iloc[0]*100).round(2); n2 = (p2/p2.iloc[0]*100).round(2)
-    cb = pd.DataFrame({t1:n1,t2:n2}).dropna()
-    return {"dates":[str(d)[:10] for d in cb.index],"price1":cb[t1].tolist(),
-            "price2":cb[t2].tolist(),"ratio":(cb[t1]/cb[t2]).round(4).tolist(),
-            "corr":round(float(cb[t1].corr(cb[t2])),3),
+    cb = pd.DataFrame({t1:n1, t2:n2}).dropna()
+    dates = [str(d)[:10] for d in cb.index]
+
+    # Rolling correlation
+    r1 = cb[t1].pct_change(); r2 = cb[t2].pct_change()
+    rolling_corr = r1.rolling(window).corr(r2).round(3)
+    rolling_corr_list = [round(float(v),3) if not np.isnan(v) else None for v in rolling_corr]
+
+    # Overall correlation
+    corr = round(float(cb[t1].corr(cb[t2])), 3)
+
+    # Context assets: SPY, TLT (10Y bond proxy), GLD, optional custom
+    def norm_series(ticker):
+        try:
+            df = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=True)
+            if df.empty: return None, None
+            s = df["Close"].squeeze().reindex(cb.index, method="ffill")
+            normed = (s/s.iloc[0]*100).round(2)
+            ret    = round((float(s.iloc[-1])/float(s.iloc[0])-1)*100,1)
+            return [v if not np.isnan(v) else None for v in normed], ret
+        except: return None, None
+
+    spy_n, spy_r = norm_series("SPY")
+    tlt_n, tlt_r = norm_series("TLT")
+    gld_n, gld_r = norm_series("GLD")
+    cus_n, cus_r = norm_series(custom) if custom else (None, None)
+
+    return {"dates":dates,
+            "price1":cb[t1].tolist(),"price2":cb[t2].tolist(),
+            "ratio":(cb[t1]/cb[t2]).round(4).tolist(),
+            "corr":corr,"rollingCorr":rolling_corr_list,
             "ret1":round((float(p1.iloc[-1])/float(p1.iloc[0])-1)*100,1),
-            "ret2":round((float(p2.iloc[-1])/float(p2.iloc[0])-1)*100,1)}, None
+            "ret2":round((float(p2.iloc[-1])/float(p2.iloc[0])-1)*100,1),
+            "ctx":{"spy":spy_n,"tlt":tlt_n,"gld":gld_n,"custom":cus_n},
+            "ctxReturns":{"spy":spy_r,"tlt":tlt_r,"gld":gld_r,"custom":cus_r},
+            "ctxCustomTicker":custom}, None
 
 
 # ── Routes ────────────────────────────────────────────────────────────────
@@ -561,12 +592,25 @@ tr:hover td{background:var(--sur2)}
 <div id="pg-pair" class="pg">
 <div class="two">
   <aside><div class="card"><div class="ch">Pair Analysis</div><div class="cb">
+    <div class="sl">Securities to Compare</div>
     <div class="fd"><label>Ticker 1</label><input id="pair-t1" value="QQQ"/></div>
     <div class="fd"><label>Ticker 2</label><input id="pair-t2" value="SPY"/></div>
     <div class="r2">
       <div class="fd"><label>Start</label><input type="date" id="pair-start" value="2010-01-01" style="font-size:.75rem;padding:.43rem .35rem"/></div>
       <div class="fd"><label>End</label><input type="date" id="pair-end" value="2024-01-01" style="font-size:.75rem;padding:.43rem .35rem"/></div>
     </div>
+    <div class="fd"><label>Rolling Correlation Window (days)</label><input type="number" id="pair-window" value="60" min="10" max="252" placeholder="e.g. 60"/></div>
+
+    <div class="sl">Market Context <span style="font-weight:400;font-size:.65rem;text-transform:none;letter-spacing:0;color:var(--mut)">— fixed benchmarks always shown</span></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:.3rem;margin-bottom:.5rem;font-size:.72rem">
+      <div style="background:var(--sur2);border:1px solid var(--bdr);border-radius:5px;padding:.35rem .55rem;color:var(--mut)">📈 S&amp;P 500 (SPY)</div>
+      <div style="background:var(--sur2);border:1px solid var(--bdr);border-radius:5px;padding:.35rem .55rem;color:var(--mut)">🏦 10Y Bond (TLT)</div>
+      <div style="background:var(--sur2);border:1px solid var(--bdr);border-radius:5px;padding:.35rem .55rem;color:var(--mut)">🥇 Gold (GLD)</div>
+      <div style="background:var(--acl);border:1px solid #BFDBFE;border-radius:5px;padding:.35rem .55rem;color:var(--acc)">➕ Custom (below)</div>
+    </div>
+    <div class="fd"><label>Custom Context Ticker <span style="font-weight:400;color:var(--mut)">(optional)</span></label><input id="pair-custom" placeholder="e.g. VIX, BTC-USD, EEM"/></div>
+    <div style="font-size:.68rem;color:var(--mut);margin-bottom:.65rem">Context assets help explain whether correlation changes reflect market-wide stress, rate moves, or sector rotation.</div>
+
     <button class="btn bp" id="pair-run" onclick="runPair()">▶ Analyse Pair</button>
     <div class="er" id="pair-err"></div>
   </div></div></aside>
@@ -574,9 +618,26 @@ tr:hover td{background:var(--sur2)}
     <div class="ph" id="pair-ph"><div class="ic">⚖️</div><p>Enter two tickers to compare trends.</p></div>
     <div class="sw" id="pair-sw"><div class="sp"></div><p>Fetching data…</p></div>
     <div id="pair-res" style="display:none">
-      <div class="sg" id="pair-stats" style="grid-template-columns:repeat(3,1fr)"></div>
-      <div class="cc"><div class="ct">Normalised Price (rebased to 100)</div><canvas id="pair-chart"></canvas></div>
-      <div class="cc"><div class="ct">Price Ratio</div><canvas id="ratio-chart"></canvas></div>
+      <div class="sg" id="pair-stats" style="grid-template-columns:repeat(4,1fr)"></div>
+
+      <!-- Convergence / Divergence banner -->
+      <div id="pair-cd-banner" style="margin-bottom:1rem;padding:.85rem 1.1rem;border-radius:var(--r);border:1px solid var(--bdr);box-shadow:var(--shd)">
+        <div id="pair-cd-text"></div>
+      </div>
+
+      <div class="cc"><div class="ct">Normalised Price (rebased to 100) — <span id="pair-ct-sub" style="font-weight:400">price movement</span></div><canvas id="pair-chart"></canvas></div>
+
+      <div class="cc"><div class="ct">Rolling Correlation (<span id="pair-win-lbl">60</span>-day window) — convergence/divergence over time</div><canvas id="rolling-corr-chart"></canvas></div>
+
+      <div class="cc"><div class="ct">Price Ratio (Ticker 1 ÷ Ticker 2) — spread</div><canvas id="ratio-chart"></canvas></div>
+
+      <div class="cc"><div class="ct">Market Context — S&amp;P 500 · 10Y Bond · Gold<span id="pair-ctx-lbl"></span> (normalised to 100)</div><canvas id="ctx-chart"></canvas></div>
+
+      <div class="card" style="margin-bottom:1rem">
+        <div class="ch">Market Regime Interpretation</div>
+        <div class="cb" id="pair-regime"></div>
+      </div>
+
       <div class="card"><div class="ch">Notes &amp; Thoughts</div><div class="cb">
         <div class="fd"><label>Observations</label><textarea id="pair-notes" placeholder="What does the data tell you?"></textarea></div>
         <div class="fd"><label>Thesis</label><textarea id="pair-thesis" placeholder="Trade idea…"></textarea></div>
@@ -902,23 +963,115 @@ function runVal(){
 }
 
 // ── PAIR
+let rollingCorrChart=null,ctxChart=null;
 async function runPair(){
   const btn=document.getElementById('pair-run');
   showErr('pair-err',''); setUI('pair','sw'); btn.disabled=true; btn.textContent='Running…';
+  const t1=sv('pair-t1').toUpperCase(), t2=sv('pair-t2').toUpperCase();
+  const window_days=parseInt(sv('pair-window'))||60;
+  const custom=sv('pair-custom').toUpperCase();
   try{
-    const r=await fetch('/pair',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker1:sv('pair-t1').toUpperCase(),ticker2:sv('pair-t2').toUpperCase(),start:sv('pair-start'),end:sv('pair-end')})});
+    const r=await fetch('/pair',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ticker1:t1,ticker2:t2,start:sv('pair-start'),end:sv('pair-end'),
+        window:window_days,custom:custom||null})});
     const data=await r.json();
     if(data.error)throw new Error(data.error);
-    const t1=sv('pair-t1').toUpperCase(),t2=sv('pair-t2').toUpperCase();
+
+    // ── Stats cards ──
+    const lastCorr=data.rollingCorr[data.rollingCorr.length-1];
+    const firstCorr=data.rollingCorr.find(v=>v!==null);
+    const corrTrend=lastCorr>firstCorr?'rising':lastCorr<firstCorr?'falling':'flat';
+    document.getElementById('pair-win-lbl').textContent=window_days;
     document.getElementById('pair-stats').innerHTML=[
       {l:t1+' Return',v:fmt(data.ret1,'%'),c:data.ret1>=0?'pos':'neg'},
       {l:t2+' Return',v:fmt(data.ret2,'%'),c:data.ret2>=0?'pos':'neg'},
-      {l:'Correlation',v:data.corr,s:data.corr>=.7?'High +ve':data.corr<=-.7?'High -ve':'Low',c:'neu'},
+      {l:'Current Correlation',v:lastCorr!=null?lastCorr:'—',s:lastCorr>=.7?'High +ve':lastCorr<=-0.7?'High -ve':'Low/Moderate',c:'neu'},
+      {l:'Corr Trend',v:corrTrend==='rising'?'↑ Rising':corrTrend==='falling'?'↓ Falling':'→ Stable',s:`from ${firstCorr} to ${lastCorr}`,c:corrTrend==='rising'?'pos':'neu'},
     ].map(c=>`<div class="sc"><div class="sl2">${c.l}</div><div class="sv ${c.c}">${c.v}</div><div class="ss">${c.s||''}</div></div>`).join('');
+
+    // ── Convergence / Divergence banner ──
+    const spread=data.ratio[data.ratio.length-1]-data.ratio[0];
+    const recentSpread=data.ratio[data.ratio.length-1]-data.ratio[Math.max(0,data.ratio.length-window_days)];
+    const isConverging=Math.abs(recentSpread)<Math.abs(spread)*0.3;
+    const isdiverging=Math.abs(recentSpread)>Math.abs(spread)*0.5;
+    const cdBanner=document.getElementById('pair-cd-banner');
+    const cdText=document.getElementById('pair-cd-text');
+    if(isConverging){
+      cdBanner.style.background='#F0FDF4';cdBanner.style.borderColor='#BBF7D0';
+      cdText.innerHTML=`<span style="font-size:.85rem;font-weight:700;color:#15803D">⟶⟵ Converging</span> <span style="font-size:.78rem;color:var(--mut);margin-left:.5rem">The price spread between ${t1} and ${t2} has narrowed recently — the pair is moving closer together. Correlation: <strong>${lastCorr}</strong>.</span>`;
+    } else if(isdiverging){
+      cdBanner.style.background='#FEF2F2';cdBanner.style.borderColor='#FECACA';
+      cdText.innerHTML=`<span style="font-size:.85rem;font-weight:700;color:#DC2626">⟵⟶ Diverging</span> <span style="font-size:.78rem;color:var(--mut);margin-left:.5rem">The spread between ${t1} and ${t2} has widened — the pair is moving apart. Correlation: <strong>${lastCorr}</strong>.</span>`;
+    } else {
+      cdBanner.style.background='var(--sur2)';cdBanner.style.borderColor='var(--bdr)';
+      cdText.innerHTML=`<span style="font-size:.85rem;font-weight:700;color:var(--mut)">↔ Sideways</span> <span style="font-size:.78rem;color:var(--mut);margin-left:.5rem">No strong convergence or divergence recently. Correlation: <strong>${lastCorr}</strong>.</span>`;
+    }
+
+    // ── Normalised price chart ──
+    document.getElementById('pair-ct-sub').textContent=`${t1} vs ${t2}`;
     if(pairChart)pairChart.destroy();
-    pairChart=new Chart(document.getElementById('pair-chart'),{type:'line',data:{labels:data.dates,datasets:[{label:t1,data:data.price1,borderColor:'#2563EB',borderWidth:2,pointRadius:0,tension:.1,fill:false},{label:t2,data:data.price2,borderColor:'#F59E0B',borderWidth:2,pointRadius:0,tension:.1,fill:false}]},options:chartOpts('')});
+    pairChart=new Chart(document.getElementById('pair-chart'),{type:'line',data:{labels:data.dates,datasets:[
+      {label:t1,data:data.price1,borderColor:'#2563EB',borderWidth:2,pointRadius:0,tension:.1,fill:false},
+      {label:t2,data:data.price2,borderColor:'#F59E0B',borderWidth:2,pointRadius:0,tension:.1,fill:false}
+    ]},options:chartOpts('')});
+
+    // ── Rolling correlation chart ──
+    if(rollingCorrChart)rollingCorrChart.destroy();
+    rollingCorrChart=new Chart(document.getElementById('rolling-corr-chart'),{type:'line',data:{labels:data.dates,datasets:[
+      {label:`${window_days}-day Rolling Correlation`,data:data.rollingCorr,borderColor:'#7C3AED',borderWidth:2,pointRadius:0,tension:.3,fill:false,spanGaps:true},
+      {label:'Zero line',data:data.dates.map(()=>0),borderColor:'#E2E8F0',borderWidth:1,pointRadius:0,borderDash:[4,4],fill:false},
+    ]},options:{...chartOpts(''),scales:{...chartOpts('').scales,y:{...chartOpts('').scales.y,min:-1,max:1,ticks:{...chartOpts('').scales.y.ticks,callback:v=>v.toFixed(1)}}}}});
+
+    // ── Price ratio chart ──
     if(ratioChart)ratioChart.destroy();
-    ratioChart=new Chart(document.getElementById('ratio-chart'),{type:'line',data:{labels:data.dates,datasets:[{label:t1+'/'+t2,data:data.ratio,borderColor:'#7C3AED',borderWidth:1.5,pointRadius:0,tension:.1,fill:'origin',backgroundColor:'rgba(124,58,237,.05)'}]},options:chartOpts('')});
+    ratioChart=new Chart(document.getElementById('ratio-chart'),{type:'line',data:{labels:data.dates,datasets:[
+      {label:t1+'/'+t2+' ratio',data:data.ratio,borderColor:'#0891B2',borderWidth:1.5,pointRadius:0,tension:.1,fill:'origin',backgroundColor:'rgba(8,145,178,.05)'}
+    ]},options:chartOpts('')});
+
+    // ── Context chart ──
+    document.getElementById('pair-ctx-lbl').textContent=data.ctxCustomTicker?' · '+data.ctxCustomTicker:'';
+    const ctxDatasets=[
+      {label:'S&P 500 (SPY)',data:data.ctx.spy,borderColor:'#2563EB',borderWidth:1.5,pointRadius:0,tension:.1,fill:false},
+      {label:'10Y Bond (TLT)',data:data.ctx.tlt,borderColor:'#16A34A',borderWidth:1.5,pointRadius:0,tension:.1,fill:false},
+      {label:'Gold (GLD)',data:data.ctx.gld,borderColor:'#D97706',borderWidth:1.5,pointRadius:0,tension:.1,fill:false},
+    ];
+    if(data.ctx.custom&&data.ctxCustomTicker){
+      ctxDatasets.push({label:data.ctxCustomTicker,data:data.ctx.custom,borderColor:'#DC2626',borderWidth:1.5,pointRadius:0,borderDash:[4,3],tension:.1,fill:false});
+    }
+    if(ctxChart)ctxChart.destroy();
+    ctxChart=new Chart(document.getElementById('ctx-chart'),{type:'line',data:{labels:data.dates,datasets:ctxDatasets},options:chartOpts('')});
+
+    // ── Regime interpretation ──
+    const spy_ret=data.ctxReturns.spy, tlt_ret=data.ctxReturns.tlt, gld_ret=data.ctxReturns.gld;
+    let regime='Unclear / mixed signals';
+    let regimeColor='var(--mut)';
+    let regimeDetail='';
+    if(spy_ret<-10&&tlt_ret>5&&gld_ret>5){
+      regime='⚠️ Risk-Off / Stress';regimeColor='#DC2626';
+      regimeDetail='Equities falling, bonds and gold rising — classic flight-to-safety pattern. High correlation between the two securities during this period may reflect shared macro risk. Divergence may signal relative safe-haven demand.';
+    } else if(spy_ret>10&&tlt_ret<0&&gld_ret<0){
+      regime='✅ Risk-On / Growth';regimeColor='#16A34A';
+      regimeDetail='Equities strong, bonds and gold soft — typical risk-on environment. Pairs correlating here likely have shared growth exposure. Divergence may signal sector rotation.';
+    } else if(tlt_ret<-10){
+      regime='📈 Rising Rates Environment';regimeColor='#D97706';
+      regimeDetail='Bonds selling off sharply — rates rising. Rate-sensitive sectors may show unusual correlation patterns. Divergence between the pair could reflect different rate sensitivities.';
+    } else if(gld_ret>15){
+      regime='🥇 Inflation / Uncertainty Hedge';regimeColor='#D97706';
+      regimeDetail='Gold outperforming strongly — inflation concerns or geopolitical uncertainty. Correlations may be elevated across risk assets.';
+    } else if(Math.abs(spy_ret)<5&&Math.abs(tlt_ret)<5){
+      regime='😴 Low Volatility / Sideways';regimeColor='#64748B';
+      regimeDetail='Markets relatively calm. Correlation patterns between the pair are more likely driven by security-specific factors than macro conditions.';
+    }
+    document.getElementById('pair-regime').innerHTML=`
+      <div style="font-size:.9rem;font-weight:700;color:${regimeColor};margin-bottom:.5rem">${regime}</div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:.5rem;margin-bottom:.75rem">
+        <div class="sc"><div class="sl2">S&P 500</div><div class="sv ${spy_ret>=0?'pos':'neg'}">${fmt(spy_ret,'%')}</div><div class="ss">period return</div></div>
+        <div class="sc"><div class="sl2">10Y Bond (TLT)</div><div class="sv ${tlt_ret>=0?'pos':'neg'}">${fmt(tlt_ret,'%')}</div><div class="ss">period return</div></div>
+        <div class="sc"><div class="sl2">Gold (GLD)</div><div class="sv ${gld_ret>=0?'pos':'neg'}">${fmt(gld_ret,'%')}</div><div class="ss">period return</div></div>
+      </div>
+      ${data.ctxCustomTicker&&data.ctxReturns.custom!=null?`<div style="font-size:.78rem;color:var(--mut);margin-bottom:.5rem">${data.ctxCustomTicker}: <strong class="${data.ctxReturns.custom>=0?'pos':'neg'}">${fmt(data.ctxReturns.custom,'%')}</strong> over period</div>`:''}
+      <div style="font-size:.8rem;color:var(--txt);line-height:1.7;background:var(--sur2);border-radius:7px;padding:.65rem .85rem;border:1px solid var(--bdr)">${regimeDetail||'No strong regime signal identified. Examine individual chart patterns for context.'}</div>`;
+
     setUI('pair','res'); curPair={data,t1,t2};
   }catch(e){showErr('pair-err',e.message);setUI('pair','ph');}
   finally{btn.disabled=false;btn.textContent='▶ Analyse Pair';}
@@ -1132,7 +1285,9 @@ def pair():
     d = request.json
     try:
         r, e = run_pair(d.get("ticker1","").upper(), d.get("ticker2","").upper(),
-                        d.get("start","2010-01-01"), d.get("end","2024-01-01"))
+                        d.get("start","2010-01-01"), d.get("end","2024-01-01"),
+                        window=int(d.get("window",60)),
+                        custom=d.get("custom","").upper().strip() or None)
         if e: return jsonify({"error":e}), 400
         return jsonify(r)
     except Exception as ex:
