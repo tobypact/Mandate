@@ -403,6 +403,25 @@ def run_pair(t1, t2, start, end, window=60, custom=None):
     gld_n, gld_r = norm_series("GLD")
     cus_n, cus_r = norm_series(custom) if custom else (None, None)
 
+    # Rolling correlations of T1 and T2 vs each context asset
+    def rolling_corr_vs(ctx_ticker):
+        try:
+            ctx_df = yf.download(ctx_ticker, start=start, end=end,
+                                  progress=False, auto_adjust=True)
+            if ctx_df.empty: return None, None
+            ctx_p  = ctx_df["Close"].squeeze().reindex(cb.index, method="ffill")
+            ctx_r  = ctx_p.pct_change()
+            rc1 = r1.rolling(window).corr(ctx_r).round(3)
+            rc2 = r2.rolling(window).corr(ctx_r).round(3)
+            to_list = lambda s: [round(float(v),3) if not np.isnan(v) else None for v in s]
+            return to_list(rc1), to_list(rc2)
+        except Exception:
+            return None, None
+
+    rc_spy1, rc_spy2 = rolling_corr_vs("SPY")
+    rc_tlt1, rc_tlt2 = rolling_corr_vs("TLT")
+    rc_gld1, rc_gld2 = rolling_corr_vs("GLD")
+
     return {"dates":dates,
             "price1":cb[t1].tolist(),"price2":cb[t2].tolist(),
             "ratio":(cb[t1]/cb[t2]).round(4).tolist(),
@@ -411,7 +430,12 @@ def run_pair(t1, t2, start, end, window=60, custom=None):
             "ret2":round((float(p2.iloc[-1])/float(p2.iloc[0])-1)*100,1),
             "ctx":{"spy":spy_n,"tlt":tlt_n,"gld":gld_n,"custom":cus_n},
             "ctxReturns":{"spy":spy_r,"tlt":tlt_r,"gld":gld_r,"custom":cus_r},
-            "ctxCustomTicker":custom}, None
+            "ctxCustomTicker":custom,
+            "rollingCorrCtx":{
+                "spy1":rc_spy1,"spy2":rc_spy2,
+                "tlt1":rc_tlt1,"tlt2":rc_tlt2,
+                "gld1":rc_gld1,"gld2":rc_gld2,
+            }}, None
 
 
 # ── Routes ────────────────────────────────────────────────────────────────
@@ -769,7 +793,7 @@ tr:hover td{background:var(--sur2)}
 </div>
 <canvas id="pair-chart"></canvas></div>
 
-      <div class="cc"><div class="cv-toolbar"><div class="ct">Rolling Correlation (<span id="pair-win-lbl">60</span>-day window) — convergence/divergence over time</div><div style="display:flex;gap:.25rem">
+      <div class="cc"><div class="cv-toolbar"><div class="ct">Rolling Correlation (<span id="pair-win-lbl">60</span>-day window) — pair vs each other &amp; vs SPY · TLT · GLD</div><div style="display:flex;gap:.25rem">
   <button class="cv-btn cv-active" onclick="setCvView('pair-corr',this,'D')">D</button>
   <button class="cv-btn" onclick="setCvView('pair-corr',this,'M')">M</button>
   <button class="cv-btn" onclick="setCvView('pair-corr',this,'Y')">Y</button>
@@ -1901,15 +1925,30 @@ async function runPair(){
 
     // ── Rolling correlation chart ──
     if(rollingCorrChart)rollingCorrChart.destroy();
-    rollingCorrChart=new Chart(document.getElementById('rolling-corr-chart'),{type:'line',data:{labels:data.dates,datasets:[
-      {label:`${window_days}-day Rolling Correlation`,data:data.rollingCorr,borderColor:'#7C3AED',borderWidth:2,pointRadius:0,tension:.3,fill:false,spanGaps:true},
-      {label:'Zero line',data:data.dates.map(()=>0),borderColor:'#E2E8F0',borderWidth:1,pointRadius:0,borderDash:[4,4],fill:false},
-    ]},options:{...chartOpts(''),scales:{...chartOpts('').scales,y:{...chartOpts('').scales.y,min:-1,max:1,ticks:{...chartOpts('').scales.y.ticks,callback:v=>v.toFixed(1)}}}}});
+    const rc = data.rollingCorrCtx || {};
+    const corrDs = [
+      {label:`${t1} vs ${t2} (pair)`,  data:data.rollingCorr, borderColor:'#7C3AED',borderWidth:2.5,pointRadius:0,tension:.3,fill:false,spanGaps:true},
+      {label:`${t1} vs S&P 500 (SPY)`, data:rc.spy1||[],      borderColor:'#2563EB',borderWidth:1.5,pointRadius:0,tension:.3,borderDash:[4,3],fill:false,spanGaps:true},
+      {label:`${t2} vs S&P 500 (SPY)`, data:rc.spy2||[],      borderColor:'#93C5FD',borderWidth:1.5,pointRadius:0,tension:.3,borderDash:[4,3],fill:false,spanGaps:true},
+      {label:`${t1} vs 10Y Bond (TLT)`,data:rc.tlt1||[],      borderColor:'#16A34A',borderWidth:1.5,pointRadius:0,tension:.3,borderDash:[4,3],fill:false,spanGaps:true},
+      {label:`${t2} vs 10Y Bond (TLT)`,data:rc.tlt2||[],      borderColor:'#86EFAC',borderWidth:1.5,pointRadius:0,tension:.3,borderDash:[4,3],fill:false,spanGaps:true},
+      {label:`${t1} vs Gold (GLD)`,     data:rc.gld1||[],      borderColor:'#D97706',borderWidth:1.5,pointRadius:0,tension:.3,borderDash:[4,3],fill:false,spanGaps:true},
+      {label:`${t2} vs Gold (GLD)`,     data:rc.gld2||[],      borderColor:'#FCD34D',borderWidth:1.5,pointRadius:0,tension:.3,borderDash:[4,3],fill:false,spanGaps:true},
+      {label:'Zero',data:data.dates.map(()=>0),borderColor:'#E2E8F0',borderWidth:1,pointRadius:0,borderDash:[4,4],fill:false},
+    ];
+    const corrOpts = {...chartOpts(''),
+      scales:{...chartOpts('').scales,
+        y:{...chartOpts('').scales.y,min:-1,max:1,
+           ticks:{...chartOpts('').scales.y?.ticks,callback:v=>v.toFixed(1)}}},
+      plugins:{...chartOpts('').plugins,
+        legend:{labels:{color:'#64748B',font:{family:'Inter',size:10},
+          filter:item=>item.text!=='Zero',
+          boxWidth:20,padding:8}}}};
+    rollingCorrChart=new Chart(document.getElementById('rolling-corr-chart'),
+      {type:'line',data:{labels:data.dates,datasets:corrDs},options:corrOpts});
     cvRegister('pair-corr',()=>rollingCorrChart,
-      ()=>({labels:data.dates,datasets:[
-        {label:`${window_days}-day Rolling Correlation`,data:data.rollingCorr,borderColor:'#7C3AED',borderWidth:2,pointRadius:0,tension:.3,fill:false,spanGaps:true},
-        {label:'Zero line',data:data.dates.map(()=>0),borderColor:'#E2E8F0',borderWidth:1,pointRadius:0,borderDash:[4,4],fill:false}
-      ]}), (lbl,ds)=>{rollingCorrChart.data.labels=lbl;ds.forEach((d,i)=>{if(rollingCorrChart.data.datasets[i])rollingCorrChart.data.datasets[i].data=d.data;});rollingCorrChart.update();});
+      ()=>({labels:data.dates,datasets:corrDs}),
+      (lbl,ds)=>{rollingCorrChart.data.labels=lbl;ds.forEach((d,i)=>{if(rollingCorrChart.data.datasets[i])rollingCorrChart.data.datasets[i].data=d.data;});rollingCorrChart.update();});
     cvState['pair-corr']={view:'D',from:null,to:null};
 
     // ── Price ratio chart ──
