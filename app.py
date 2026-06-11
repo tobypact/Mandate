@@ -1668,8 +1668,9 @@ function renderBt(data,params){
   document.getElementById('cmp-s').textContent=ticker+' Strategy';
   document.getElementById('cmp-b').textContent=bmlbl;
   document.getElementById('bt-ctitle').textContent=`Equity Curve — ${data.stockName||ticker} vs ${bmlbl}`;
+  const rm=data.riskMetrics||{};
   const riskAdjRet = rm.beta && rm.beta!==null && s.bmReturn!==null
-    ? Math.round((s.totalReturn - (rm.beta * s.bmReturn))*100)/100  // Jensen's Alpha
+    ? Math.round((s.totalReturn - (rm.beta * s.bmReturn))*100)/100
     : null;
   const treynor = rm.beta && rm.beta>0
     ? Math.round(s.totalReturn/rm.beta*100)/100 : null;
@@ -1693,7 +1694,6 @@ function renderBt(data,params){
     {l:'MWA / IRR',v:s.irr!=null?fmt(s.irr,'%'):'—',s:'money-weighted (IRR)',c:s.irr!=null&&s.irr>=0?'pos':'neg'},
     {l:'Capital Deployed',v:s.deployedPct+'%',s:`${s.holdingDays} of ${s.daysSpanned} days`,c:'neu'},
   ].map(c=>`<div class="sc"><div class="sl2">${c.l}</div><div class="sv ${c.c}">${c.v}</div><div class="ss">${c.s}</div></div>`).join('');
-  const rm=data.riskMetrics||{};
   document.getElementById('bt-cmp').innerHTML=[
     {m:'Total Return',st:fmt(s.totalReturn,'%'),bm:fmt(s.bmReturn,'%'),edge:alpha,es:'%'},
     {m:'Max Drawdown',st:fmt(s.maxDrawdown,'%'),bm:'—',edge:null},
