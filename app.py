@@ -891,6 +891,12 @@ tr:hover td{background:var(--sur2)}
     <div style="font-size:.68rem;color:var(--mut);margin-bottom:.5rem">Add tickers to compute Appraisal Ratio vs your portfolio benchmark</div>
     <div id="wl-list"></div>
     <button class="btn bg" style="width:100%;margin-bottom:.75rem;font-size:.76rem" onclick="addWatchItem()">+ Add Security</button>
+    <div class="sl">New Security (What-If) <span style="font-weight:400;font-size:.65rem;text-transform:none;letter-spacing:0;color:var(--mut)">— optional</span></div>
+    <div style="font-size:.68rem;color:var(--mut);margin-bottom:.5rem">Add a security to see how it changes portfolio return, volatility and Sharpe.</div>
+    <div class="r2">
+      <div class="fd"><label>Ticker</label><input id="pf-wi-ticker" placeholder="e.g. MSFT" style="text-transform:uppercase"/></div>
+      <div class="fd"><label>Weight (%)</label><input type="number" id="pf-wi-weight" placeholder="e.g. 10" min="1" max="99"/></div>
+    </div>
     <button class="btn bp" id="pf-run" onclick="runPortfolio()">▶ Analyse Portfolio</button>
     <div class="er" id="pf-err"></div>
   </div></div></aside>
@@ -923,6 +929,10 @@ tr:hover td{background:var(--sur2)}
       <div class="card" id="pf-ir-card" style="display:none;margin-bottom:1rem">
         <div class="ch">Information Ratio &amp; Appraisal Ratio</div>
         <div class="cb" id="pf-ir-body"></div>
+      </div>
+      <div class="card" id="pf-whatif-card" style="display:none;margin-bottom:1rem">
+        <div class="ch">New Security — Portfolio Impact</div>
+        <div class="cb" id="pf-whatif-body"></div>
       </div>
       <div class="card" id="pf-tgt-card" style="display:none;margin-bottom:1rem"><div class="ch">Return Target</div><div class="cb" id="pf-tgt-body"></div></div>
       <div class="card"><div class="ch">Notes &amp; Thoughts</div><div class="cb">
@@ -1658,6 +1668,11 @@ function renderBt(data,params){
   document.getElementById('cmp-s').textContent=ticker+' Strategy';
   document.getElementById('cmp-b').textContent=bmlbl;
   document.getElementById('bt-ctitle').textContent=`Equity Curve — ${data.stockName||ticker} vs ${bmlbl}`;
+  const riskAdjRet = rm.beta && rm.beta!==null && s.bmReturn!==null
+    ? Math.round((s.totalReturn - (rm.beta * s.bmReturn))*100)/100  // Jensen's Alpha
+    : null;
+  const treynor = rm.beta && rm.beta>0
+    ? Math.round(s.totalReturn/rm.beta*100)/100 : null;
   document.getElementById('bt-stats').innerHTML=[
     {l:'Strategy Return',v:fmt(s.totalReturn,'%'),s:`Final $${s.finalValue.toLocaleString()}`,c:s.totalReturn>=0?'pos':'neg'},
     {l:bmlbl,v:fmt(s.bmReturn,'%'),s:'benchmark',c:s.bmReturn>=0?'pos':'neg'},
@@ -1667,6 +1682,10 @@ function renderBt(data,params){
     {l:'Avg Loss',v:fmt(s.avgLoss,'%'),s:'per loser',c:'neg'},
     {l:'Sharpe',v:s.sharpe,s:'risk-adj return',c:s.sharpe>=1?'pos':'neu'},
     {l:'Max Drawdown',v:fmt(s.maxDrawdown,'%'),s:'peak→trough',c:s.maxDrawdown<=-20?'neg':'neu'},
+    {l:"Risk-Adj Return (Treynor)",v:treynor!==null?treynor+'%':'—',s:'return ÷ beta',c:treynor!==null&&treynor>=0?'pos':'neu'},
+    {l:"Jensen's Alpha",v:riskAdjRet!==null?fmt(riskAdjRet,'%'):'—',s:'vs beta-adj BM',c:riskAdjRet!==null&&riskAdjRet>=0?'pos':'neg'},
+    {l:'Beta to Market',v:rm.beta??'—',s:rm.beta?(rm.beta>1?'more volatile':rm.beta<1?'less volatile':'neutral'):'vs benchmark',c:'neu'},
+    {l:'Correlation to BM',v:rm.corrBm??'—',s:'price correlation',c:'neu'},
     {l:'Days Spanned',v:s.daysSpanned,s:`${s.holdingDays}d holding · ${s.cashDays}d cash`,c:'neu'},
     {l:'Trading Days',v:s.tradingDays,s:'market open days in period',c:'neu'},
     {l:'Annualised Return',v:fmt(s.annualisedReturn,'%'),s:'CAGR over period',c:s.annualisedReturn>=0?'pos':'neg'},
@@ -2065,7 +2084,9 @@ async function runPortfolio(){
   const lbV=sv('pf-lb-val'),lbU=document.getElementById('pf-lb-unit').value;
   try{
     const watchlist=[...document.querySelectorAll('.wl-tk')].map(e=>e.value.trim().toUpperCase()).filter(Boolean);
-    const r=await fetch('/portfolio',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({holdings,targetReturn:document.getElementById('pf-use-target').checked?gv('pf-target'):null,benchmark:document.getElementById('pf-use-bm').checked?sv('pf-bm'):'',lookbackDays:lbDays(),lookbackLabel:lbV+' '+lbU,watchlist})});
+    const wiTicker = sv('pf-wi-ticker').toUpperCase();
+    const wiWeight = gv('pf-wi-weight');
+    const r=await fetch('/portfolio',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({holdings,targetReturn:document.getElementById('pf-use-target').checked?gv('pf-target'):null,benchmark:document.getElementById('pf-use-bm').checked?sv('pf-bm'):'',lookbackDays:lbDays(),lookbackLabel:lbV+' '+lbU,watchlist,whatIf:wiTicker&&wiWeight?{ticker:wiTicker,weight:wiWeight}:null})});
     const data=await r.json();
     if(data.error)throw new Error(data.error);
     curPf=data; renderPf(data); setUI('pf','res');
@@ -2074,13 +2095,17 @@ async function runPortfolio(){
 }
 function renderPf(d){
   const gap=d.targetGap;
+  const pfSortino = d.sortino != null ? d.sortino : '—';
+  const pfRiskAdj = d.portVol>0 ? Math.round(d.portReturn/d.portVol*100)/100 : null;
   document.getElementById('pf-stats').innerHTML=[
     {l:'Total Market Value',v:'$'+d.totalMarketValue.toLocaleString(),s:'current',c:'neu'},
     {l:'Total Cost Basis',v:'$'+d.totalCost.toLocaleString(),s:'invested',c:''},
     {l:'Unrealised P&L',v:(d.totalPnl>=0?'+':'')+' $'+Math.abs(d.totalPnl).toLocaleString(),s:(d.totalPnlPct>=0?'+':'')+d.totalPnlPct+'%',c:d.totalPnl>=0?'pos':'neg'},
     {l:'Est. Annual Return',v:fmt(d.portReturn,'%'),s:'over '+(d.lookbackLabel||'lookback'),c:d.portReturn>=0?'pos':'neg'},
-    {l:'Volatility',v:d.portVol+'%',s:'annualised',c:'neu'},
-    {l:'Sharpe Ratio',v:d.sharpe,s:'return/risk',c:d.sharpe>=1?'pos':'neu'},
+    {l:'Volatility (Annual)',v:d.portVol+'%',s:'annualised std dev',c:'neu'},
+    {l:'Sharpe Ratio',v:d.sharpe,s:'return / volatility',c:d.sharpe>=1?'pos':'neu'},
+    {l:'Risk-Adj Return',v:pfRiskAdj!==null?pfRiskAdj:'—',s:'return ÷ vol (Sharpe proxy)',c:pfRiskAdj!==null&&pfRiskAdj>=0?'pos':'neu'},
+    {l:'Sortino Ratio',v:pfSortino,s:'return / downside vol',c:pfSortino!=='—'&&pfSortino>=1?'pos':'neu'},
     gap!=null?{l:'Target Gap',v:(gap>=0?'+':'')+gap+'%',s:gap>=0?'✅ on track':'⚠ below target',c:gap>=0?'pos':'neg'}:{l:'Positions',v:d.positions.length,s:'holdings',c:'neu'},
     {l:'Holdings',v:d.positions.length,s:'positions',c:'neu'},
   ].map(c=>`<div class="sc"><div class="sl2">${c.l}</div><div class="sv ${c.c}">${c.v}</div><div class="ss">${c.s}</div></div>`).join('');
@@ -2133,6 +2158,40 @@ function renderPf(d){
     }
     document.getElementById('pf-ir-body').innerHTML=irHtml;
   } else {irCard.style.display='none';}
+
+  // ── What-If new security ──
+  const wiCard = document.getElementById('pf-whatif-card');
+  if(d.whatIf){
+    wiCard.style.display='block';
+    const wi=d.whatIf;
+    const arrow=(a,b)=>a>b?'▲':'▼';
+    const cls=(a,b,inv=false)=>{ const better=inv?(a<b):(a>b); return better?'pos':'neg'; };
+    wiCard.querySelector('.ch').textContent=`Adding ${wi.ticker} (${wi.weight}% weight) — Portfolio Impact`;
+    document.getElementById('pf-whatif-body').innerHTML=`
+      <div style="font-size:.72rem;color:var(--mut);margin-bottom:.85rem">
+        Simulates replacing ${wi.weight}% of the portfolio with <strong>${wi.ticker}</strong>, scaling existing positions proportionally.
+      </div>
+      <div class="sg" style="grid-template-columns:repeat(3,1fr);margin-bottom:.75rem">
+        <div class="sc"><div class="sl2">Annual Return</div>
+          <div class="sv">${fmt(d.portReturn,'%')} → <span class="${cls(wi.newReturn,d.portReturn)}">${fmt(wi.newReturn,'%')}</span></div>
+          <div class="ss">${arrow(wi.newReturn,d.portReturn)} ${Math.abs(Math.round((wi.newReturn-d.portReturn)*100)/100)}% change</div></div>
+        <div class="sc"><div class="sl2">Volatility</div>
+          <div class="sv">${d.portVol}% → <span class="${cls(wi.newVol,d.portVol,true)}">${wi.newVol}%</span></div>
+          <div class="ss">${arrow(wi.newVol,d.portVol)} ${Math.abs(Math.round((wi.newVol-d.portVol)*100)/100)}% change</div></div>
+        <div class="sc"><div class="sl2">Sharpe Ratio</div>
+          <div class="sv">${d.sharpe} → <span class="${cls(wi.newSharpe,d.sharpe)}">${wi.newSharpe}</span></div>
+          <div class="ss">${arrow(wi.newSharpe,d.sharpe)} ${Math.abs(Math.round((wi.newSharpe-d.sharpe)*100)/100)} change</div></div>
+      </div>
+      <div style="font-size:.78rem;background:var(--sur2);border-radius:7px;padding:.65rem .85rem;border:1px solid var(--bdr);line-height:1.75">
+        <strong>${wi.ticker}</strong>: return ${fmt(wi.secReturn,'%')}, vol ${wi.secVol}%, corr to portfolio ${wi.corrToPort}.
+        ${wi.newSharpe>d.sharpe
+          ? `✅ Adding ${wi.ticker} <strong>improves</strong> risk-adjusted return.`
+          : wi.newSharpe===d.sharpe
+          ? `→ Negligible impact on risk-adjusted return.`
+          : `⚠ Adding ${wi.ticker} <strong>reduces</strong> risk-adjusted return.`}
+        ${wi.corrToPort<0.3?` Low correlation (${wi.corrToPort}) provides diversification benefit.`:wi.corrToPort>0.7?` High correlation (${wi.corrToPort}) adds little diversification.`:``}
+      </div>`;
+  } else { wiCard.style.display='none'; }
 
   if(gap!=null&&d.targetGap!==null){
     document.getElementById('pf-tgt-card').style.display='block';
@@ -2537,13 +2596,55 @@ def portfolio():
             except: s = "Unknown"
             sectors[s] = round(sectors.get(s,0)+weights[t],2)
 
+        # ── Sortino ratio (downside deviation only) ──
+        downside_rets = pr[pr < 0]
+        downside_vol  = round(float(downside_rets.std()) * np.sqrt(252) * 100, 2) if len(downside_rets) > 3 else None
+        sortino       = round(pret / downside_vol, 2) if downside_vol and downside_vol > 0 else None
+
+        # ── What-if: add new security at given weight ──
+        whatif_result = None
+        whatif_cfg = d.get("whatIf")
+        if whatif_cfg and whatif_cfg.get("ticker") and whatif_cfg.get("weight"):
+            try:
+                wi_ticker = whatif_cfg["ticker"].upper().strip()
+                wi_weight = float(whatif_cfg["weight"]) / 100.0
+                wi_df = yf.download(wi_ticker, period=f"{days}d", progress=False, auto_adjust=True)
+                if not wi_df.empty:
+                    wi_close  = wi_df["Close"].squeeze()
+                    wi_rets   = wi_close.pct_change().dropna()
+                    wi_ret    = round(float(wi_rets.mean()) * 252 * 100, 2)
+                    wi_vol    = round(float(wi_rets.std()) * np.sqrt(252) * 100, 2)
+                    # Scale down existing portfolio by (1 - wi_weight) and add new security
+                    pr_wi   = pr * (1 - wi_weight) + wi_rets.reindex(pr.index, method="ffill").fillna(0) * wi_weight
+                    new_ret = round(float(pr_wi.mean()) * 252 * 100, 2)
+                    new_vol = round(float(pr_wi.std()) * np.sqrt(252) * 100, 2)
+                    new_sh  = round(new_ret / new_vol, 2) if new_vol > 0 else None
+                    # Correlation of new security to current portfolio
+                    wi_aligned = wi_rets.reindex(pr.index).dropna()
+                    pr_aligned = pr.reindex(wi_aligned.index)
+                    corr_to_port = round(float(wi_aligned.corr(pr_aligned)), 3) if len(wi_aligned) > 10 else None
+                    whatif_result = {
+                        "ticker":    wi_ticker,
+                        "weight":    round(wi_weight * 100, 1),
+                        "secReturn": wi_ret,
+                        "secVol":    wi_vol,
+                        "newReturn": new_ret,
+                        "newVol":    new_vol,
+                        "newSharpe": new_sh,
+                        "corrToPort":corr_to_port,
+                    }
+            except Exception:
+                pass
+
         return jsonify({"positions":positions,"totalMarketValue":round(tot_mkt,2),
             "totalCost":round(tot_cost,2),"totalPnl":round(tot_pnl,2),
             "totalPnlPct":round(tot_pnl/tot_cost*100,2) if tot_cost else 0,
-            "portReturn":pret,"portVol":pv,"sharpe":sharpe,"targetGap":tgap,
+            "portReturn":pret,"portVol":pv,"sharpe":sharpe,"sortino":sortino,
+            "targetGap":tgap,
             "informationRatio":ir,"activeReturn":active_ret,
             "pfTrackingError":pf_te,"benchmarkUsed":bm_used,
             "appraisalRatios":appraisal_ratios,
+            "whatIf":whatif_result,
             "corr":{"tickers":tickers,"matrix":corr.values.tolist()},
             "sectorWeights":sectors,"lookbackLabel":d.get("lookbackLabel","")})
     except Exception as ex:
