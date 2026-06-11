@@ -568,10 +568,10 @@ tr:hover td{background:var(--sur2)}
 <header>
   <div class="logo">Investment Mandate<span> & Capital Deployment</span></div>
   <nav>
-    <button class="nb active" onclick="showPage('mandate',this)">Mandate</button>
+    <button class="nb active" onclick="showPage('mandate',this)">Backtesting</button>
     <button class="nb" onclick="showPage('valuation',this)">Valuation</button>
     <button class="nb" onclick="showPage('pair',this)">Correlation Analysis</button>
-    <button class="nb" onclick="showPage('portfolio',this)">Portfolio</button>
+    <button class="nb" onclick="showPage('portfolio',this)">Portfolio Analysis</button>
     <button class="nb" onclick="showPage('monitor',this)">Live Monitor</button>
     <button class="nb" onclick="showPage('financials',this)">Financials</button>
     <button class="nb" onclick="showPage('records',this)">Records</button>
@@ -582,7 +582,7 @@ tr:hover td{background:var(--sur2)}
 <div id="pg-mandate" class="pg active">
 <div class="two">
   <aside>
-    <div class="card"><div class="ch">Mandate Setup</div><div class="cb">
+    <div class="card"><div class="ch">Backtesting Setup</div><div class="cb">
       <div class="sl">Asset</div>
       <div class="fd"><label>Ticker</label><input id="bt-ticker" value="QQQ"/></div>
       <div class="r2">
@@ -664,7 +664,7 @@ tr:hover td{background:var(--sur2)}
         <div class="fd"><label>Window (days)</label><input type="number" id="bt-roll-win" value="30" min="5" max="252" placeholder="30"/></div>
         <div class="fd"><label>History (years)</label><input type="number" id="bt-roll-hist" value="20" min="1" max="50" placeholder="20"/></div>
       </div>
-      <button class="btn bp" id="bt-run" onclick="runBacktest()" style="margin-top:.75rem">▶ Run Mandate</button>
+      <button class="btn bp" id="bt-run" onclick="runBacktest()" style="margin-top:.75rem">▶ Run Backtest</button>
       <div class="er" id="bt-err"></div>
     </div></div>
   </aside>
@@ -1645,7 +1645,7 @@ async function runBacktest(){
     if(data.error)throw new Error(data.error);
     curBt={data,payload}; renderBt(data,payload); setUI('bt','res');
   }catch(e){showErr('bt-err',e.message);setUI('bt','ph');}
-  finally{btn.disabled=false;btn.textContent='▶ Run Mandate';}
+  finally{btn.disabled=false;btn.textContent='▶ Run Backtest';}
 }
 
 function renderBt(data,params){
