@@ -418,9 +418,28 @@ def run_pair(t1, t2, start, end, window=60, custom=None):
         except Exception:
             return None, None
 
-    rc_spy1, rc_spy2 = rolling_corr_vs("SPY")
-    rc_tlt1, rc_tlt2 = rolling_corr_vs("TLT")
-    rc_gld1, rc_gld2 = rolling_corr_vs("GLD")
+    # SPY vs TLT and SPY vs GLD rolling correlations
+    rc_spy_tlt1, _ = rolling_corr_vs("TLT")  # SPY as base using r1 if t1=SPY else compute directly
+    rc_spy_gld1, _ = rolling_corr_vs("GLD")
+
+    # Compute SPY vs TLT and SPY vs GLD directly regardless of pair tickers
+    def rolling_corr_pair(ta, tb):
+        try:
+            da = yf.download(ta, start=start, end=end, progress=False, auto_adjust=True)
+            db = yf.download(tb, start=start, end=end, progress=False, auto_adjust=True)
+            if da.empty or db.empty: return None
+            pa = da["Close"].squeeze(); pb = db["Close"].squeeze()
+            df2 = pd.DataFrame({"a":pa,"b":pb}).dropna()
+            ra  = df2["a"].pct_change(); rb = df2["b"].pct_change()
+            rc  = ra.rolling(window).corr(rb).round(3)
+            # align to pair dates
+            rc_aligned = rc.reindex(pd.DatetimeIndex(dates), method="ffill")
+            return [round(float(v),3) if not np.isnan(v) else None for v in rc_aligned]
+        except Exception:
+            return None
+
+    rc_spy_tlt = rolling_corr_pair("SPY", "TLT")
+    rc_spy_gld = rolling_corr_pair("SPY", "GLD")
 
     return {"dates":dates,
             "price1":cb[t1].tolist(),"price2":cb[t2].tolist(),
@@ -431,11 +450,7 @@ def run_pair(t1, t2, start, end, window=60, custom=None):
             "ctx":{"spy":spy_n,"tlt":tlt_n,"gld":gld_n,"custom":cus_n},
             "ctxReturns":{"spy":spy_r,"tlt":tlt_r,"gld":gld_r,"custom":cus_r},
             "ctxCustomTicker":custom,
-            "rollingCorrCtx":{
-                "spy1":rc_spy1,"spy2":rc_spy2,
-                "tlt1":rc_tlt1,"tlt2":rc_tlt2,
-                "gld1":rc_gld1,"gld2":rc_gld2,
-            }}, None
+            "rollingCorrCtx":{"spyTlt":rc_spy_tlt,"spyGld":rc_spy_gld}}, None
 
 
 # ── Routes ────────────────────────────────────────────────────────────────
@@ -555,7 +570,7 @@ tr:hover td{background:var(--sur2)}
   <nav>
     <button class="nb active" onclick="showPage('mandate',this)">Mandate</button>
     <button class="nb" onclick="showPage('valuation',this)">Valuation</button>
-    <button class="nb" onclick="showPage('pair',this)">Pair</button>
+    <button class="nb" onclick="showPage('pair',this)">Correlation Analysis</button>
     <button class="nb" onclick="showPage('portfolio',this)">Portfolio</button>
     <button class="nb" onclick="showPage('monitor',this)">Live Monitor</button>
     <button class="nb" onclick="showPage('financials',this)">Financials</button>
@@ -739,7 +754,7 @@ tr:hover td{background:var(--sur2)}
 <!-- PAIR -->
 <div id="pg-pair" class="pg">
 <div class="two">
-  <aside><div class="card"><div class="ch">Pair Analysis</div><div class="cb">
+  <aside><div class="card"><div class="ch">Correlation Analysis</div><div class="cb">
     <div class="sl">Securities to Compare</div>
     <div class="fd"><label>Ticker 1</label><input id="pair-t1" value="QQQ"/></div>
     <div class="fd"><label>Ticker 2</label><input id="pair-t2" value="SPY"/></div>
@@ -793,7 +808,7 @@ tr:hover td{background:var(--sur2)}
 </div>
 <canvas id="pair-chart"></canvas></div>
 
-      <div class="cc"><div class="cv-toolbar"><div class="ct">Rolling Correlation (<span id="pair-win-lbl">60</span>-day window) — pair vs each other &amp; vs SPY · TLT · GLD</div><div style="display:flex;gap:.25rem">
+      <div class="cc"><div class="cv-toolbar"><div class="ct">Rolling Correlation (<span id="pair-win-lbl">60</span>-day window) — pair &amp; S&amp;P 500 vs 10Y Bond · Gold</div><div style="display:flex;gap:.25rem">
   <button class="cv-btn cv-active" onclick="setCvView('pair-corr',this,'D')">D</button>
   <button class="cv-btn" onclick="setCvView('pair-corr',this,'M')">M</button>
   <button class="cv-btn" onclick="setCvView('pair-corr',this,'Y')">Y</button>
@@ -1927,13 +1942,9 @@ async function runPair(){
     if(rollingCorrChart)rollingCorrChart.destroy();
     const rc = data.rollingCorrCtx || {};
     const corrDs = [
-      {label:`${t1} vs ${t2} (pair)`,  data:data.rollingCorr, borderColor:'#7C3AED',borderWidth:2.5,pointRadius:0,tension:.3,fill:false,spanGaps:true},
-      {label:`${t1} vs S&P 500 (SPY)`, data:rc.spy1||[],      borderColor:'#2563EB',borderWidth:1.5,pointRadius:0,tension:.3,borderDash:[4,3],fill:false,spanGaps:true},
-      {label:`${t2} vs S&P 500 (SPY)`, data:rc.spy2||[],      borderColor:'#93C5FD',borderWidth:1.5,pointRadius:0,tension:.3,borderDash:[4,3],fill:false,spanGaps:true},
-      {label:`${t1} vs 10Y Bond (TLT)`,data:rc.tlt1||[],      borderColor:'#16A34A',borderWidth:1.5,pointRadius:0,tension:.3,borderDash:[4,3],fill:false,spanGaps:true},
-      {label:`${t2} vs 10Y Bond (TLT)`,data:rc.tlt2||[],      borderColor:'#86EFAC',borderWidth:1.5,pointRadius:0,tension:.3,borderDash:[4,3],fill:false,spanGaps:true},
-      {label:`${t1} vs Gold (GLD)`,     data:rc.gld1||[],      borderColor:'#D97706',borderWidth:1.5,pointRadius:0,tension:.3,borderDash:[4,3],fill:false,spanGaps:true},
-      {label:`${t2} vs Gold (GLD)`,     data:rc.gld2||[],      borderColor:'#FCD34D',borderWidth:1.5,pointRadius:0,tension:.3,borderDash:[4,3],fill:false,spanGaps:true},
+      {label:`${t1} vs ${t2}`,             data:data.rollingCorr,  borderColor:'#7C3AED',borderWidth:2.5,pointRadius:0,tension:.3,fill:false,spanGaps:true},
+      {label:'S&P 500 vs 10Y Bond (SPY/TLT)',data:rc.spyTlt||[],   borderColor:'#2563EB',borderWidth:1.5,pointRadius:0,tension:.3,borderDash:[5,3],fill:false,spanGaps:true},
+      {label:'S&P 500 vs Gold (SPY/GLD)',    data:rc.spyGld||[],   borderColor:'#D97706',borderWidth:1.5,pointRadius:0,tension:.3,borderDash:[5,3],fill:false,spanGaps:true},
       {label:'Zero',data:data.dates.map(()=>0),borderColor:'#E2E8F0',borderWidth:1,pointRadius:0,borderDash:[4,4],fill:false},
     ];
     const corrOpts = {...chartOpts(''),
